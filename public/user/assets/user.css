@@ -1,0 +1,554 @@
+/* ═══════════════════════════════════════
+   USER.CSS — 用户端专属样式
+   放置在 app.css 之后加载
+   ═══════════════════════════════════════ */
+
+/* ── Page Header ── */
+.page-hd {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: clamp(10px, 1.2vw, 16px);
+  margin-bottom: clamp(16px, 2vw, 24px);
+}
+
+.page-hd p {
+  margin: 0;
+  font-size: clamp(12px, 1.4vw, 14px);
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.page-hd h1 {
+  margin: 2px 0 0;
+  font-size: clamp(22px, 3vw, 32px);
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: -0.02em;
+}
+
+.page-hd-actions {
+  display: flex;
+  align-items: center;
+  gap: clamp(8px, 1vw, 14px);
+  flex-shrink: 0;
+}
+
+.badge-balance {
+  display: flex;
+  align-items: center;
+  gap: clamp(6px, 0.8vw, 10px);
+  padding: clamp(6px, 0.8vw, 10px) clamp(10px, 1.2vw, 16px);
+  border-radius: var(--radius-full);
+  background: var(--main-surface);
+  border: 1px solid var(--line);
+  text-decoration: none;
+  transition: all var(--duration-fast) var(--ease-out-expo);
+}
+
+.badge-balance:hover {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-glow);
+}
+
+.badge-balance .num {
+  font-size: clamp(15px, 1.8vw, 20px);
+  font-weight: 800;
+  color: var(--text);
+}
+
+.badge-balance .label {
+  font-size: clamp(11px, 1.3vw, 13px);
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+/* ── Grid layouts ── */
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: clamp(16px, 2vw, 24px);
+}
+
+.grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: clamp(14px, 1.6vw, 20px);
+}
+
+.grid-4 {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: clamp(12px, 1.4vw, 18px);
+}
+
+.grid-auto {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
+  gap: clamp(12px, 1.4vw, 18px);
+}
+
+/* ── Card v3 ── */
+.card-v3 {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--main-surface);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+  transition: box-shadow var(--duration-normal) var(--ease-out-expo);
+}
+
+.card-v3:hover {
+  box-shadow: var(--shadow);
+}
+
+.card-v3-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: clamp(10px, 1.2vw, 16px);
+  padding: clamp(14px, 1.8vw, 20px) clamp(16px, 2vw, 24px);
+  border-bottom: 1px solid var(--line);
+  min-height: 44px;
+}
+
+.card-v3-head > div { min-width: 0; }
+
+.card-v3-head .eyebrow {
+  margin: 0;
+  font-size: clamp(10px, 1.2vw, 12px);
+  color: var(--text-muted);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.card-v3-head h3 {
+  margin: 2px 0 0;
+  font-size: clamp(15px, 1.8vw, 19px);
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.card-v3-body {
+  padding: clamp(14px, 1.8vw, 22px) clamp(16px, 2vw, 24px);
+}
+
+/* ── Mode Toggle ── */
+.mode-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.mode-toggle label {
+  min-height: clamp(44px, 5.5vw, 52px);
+  display: grid;
+  place-items: center;
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius, 14px);
+  background: var(--main-surface);
+  color: var(--text-soft);
+  font-weight: 750;
+  font-size: clamp(13px, 1.5vw, 15px);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out-expo);
+  padding: 0 clamp(12px, 1.4vw, 16px);
+}
+
+.mode-toggle label:hover {
+  border-color: rgba(59,130,246,0.5);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.mode-toggle input { display: none; }
+
+.mode-toggle label:has(input:checked),
+.mode-toggle label.active {
+  border-color: var(--primary);
+  background: linear-gradient(135deg, var(--primary-soft), transparent);
+  color: var(--primary-dark);
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.1);
+}
+
+/* ── Media Card (Gallery) ── */
+.media-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--main-surface);
+  overflow: hidden;
+  transition: all var(--duration-normal) var(--ease-out-expo);
+}
+
+.media-card:hover {
+  border-color: var(--primary-soft);
+  box-shadow: 0 4px 16px var(--primary-glow);
+  transform: translateY(-2px);
+}
+
+.media-card img,
+.media-card video {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  display: block;
+}
+
+.media-card-body {
+  padding: clamp(8px, 1vw, 12px) clamp(10px, 1.2vw, 14px);
+}
+
+.media-card-body .prompt {
+  font-size: clamp(12px, 1.4vw, 14px);
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.media-card-body .meta {
+  display: flex;
+  align-items: center;
+  gap: clamp(4px, 0.5vw, 8px);
+  margin-top: 4px;
+  font-size: clamp(10px, 1.2vw, 12px);
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+/* ── Status Badge ── */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  font-size: clamp(10px, 1.1vw, 11px);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.status-badge.pending {
+  background: rgba(245, 158, 11, 0.12);
+  color: #b45309;
+}
+
+.status-badge.running {
+  background: rgba(59, 130, 246, 0.12);
+  color: #2563eb;
+}
+
+.status-badge.succeeded {
+  background: rgba(16, 185, 129, 0.12);
+  color: #047857;
+}
+
+.status-badge.failed {
+  background: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
+}
+
+/* ── Upload Box ── */
+.edit-upload-box {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  border: 2px dashed var(--line-strong);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out-expo);
+}
+
+.edit-upload-box:hover {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.edit-upload-box input { display: none; }
+
+.edit-upload-box strong {
+  display: block;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.edit-upload-box small {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.edit-upload-icon {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--main-surface-soft);
+  font-size: 20px;
+  font-weight: 300;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.edit-upload-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.edit-upload-preview img {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+
+/* ── Pricing / Shop ── */
+.price-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  text-align: center;
+  background: var(--main-surface);
+  transition: all var(--duration-normal) var(--ease-out-expo);
+}
+
+.price-card:hover {
+  border-color: var(--primary-soft);
+  box-shadow: 0 8px 24px var(--primary-glow);
+  transform: translateY(-4px);
+}
+
+.price-card .price {
+  font-size: 32px;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.price-card .price small {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* ── History ── */
+.history-list {
+  display: grid;
+  gap: 8px;
+}
+
+.record-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--main-surface);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out-expo);
+}
+
+.record-card:hover {
+  border-color: var(--primary-soft);
+  background: var(--primary-soft);
+}
+
+/* ── Utility ── */
+.alert {
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.alert.error {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.alert strong { display: block; font-weight: 700; margin-bottom: 4px; }
+.alert span { opacity: 0.85; }
+
+.hidden { display: none !important; }
+
+/* ── User Center ── */
+.uc-section {
+  margin-bottom: clamp(16px, 2vw, 24px);
+}
+
+/* ── Responsive ── */
+@media (max-width: 1024px) {
+  .grid-2 { grid-template-columns: 1fr; }
+  .chat-layout { grid-template-columns: 1fr; height: auto; }
+}
+
+@media (max-width: 640px) {
+  .grid-3, .grid-4 { grid-template-columns: 1fr; }
+  .page-hd { flex-direction: column; align-items: flex-start; }
+}
+
+/* ── Button Variants ── */
+.btn-primary {
+  background: linear-gradient(135deg, var(--primary-light, #60a5fa), var(--primary, #3b82f6));
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.22);
+}
+.btn-primary:hover {
+  background: linear-gradient(135deg, var(--primary, #3b82f6), var(--primary-dark, #2563eb));
+  box-shadow: 0 6px 20px rgba(59, 130, 246, 0.3);
+  transform: translateY(-2px);
+}
+.btn-primary:active { transform: translateY(0); }
+
+.btn-secondary {
+  border-color: var(--line);
+  background: var(--main-surface);
+  color: var(--text-soft);
+}
+.btn-secondary:hover {
+  border-color: rgba(59,130,246,0.5);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.btn-ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-soft);
+}
+.btn-ghost:hover { background: var(--main-surface-soft); }
+
+.btn-sm {
+  min-height: 30px;
+  padding: 0 clamp(8px, 1vw, 14px);
+  font-size: clamp(11px, 1.3vw, 13px);
+}
+
+.btn-lg {
+  min-height: 48px;
+  padding: 0 28px;
+  font-size: 15px;
+}
+
+/* ── Edit Upload ── */
+.edit-upload-field {
+  display: grid;
+  gap: 8px;
+}
+
+.edit-upload-field.hidden { display: none; }
+
+/* ── Prompt Optimize ── */
+.prompt-optimize-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.hint { color: var(--text-muted); font-size: 12px; }
+.hint.hidden { display: none; }
+
+/* ── Record Delete Form ── */
+.record-delete-form { display: inline; }
+
+/* ── Card v3 subtitle ── */
+.card-v3-head .sub {
+  margin: 0;
+  font-size: clamp(10px, 1.2vw, 12px);
+  color: var(--text-muted);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+/* ── History Empty ── */
+.history-empty-inline {
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* ── Chat Message Text ── */
+.chat-msg-text {
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.chat-msg-text p { margin: 0 0 8px; }
+.chat-msg-text p:last-child { margin-bottom: 0; }
+
+/* ── Dot (typing indicator) ── */
+.dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  animation: dotPulse 1.4s infinite ease-in-out;
+}
+.dot:nth-child(2) { animation-delay: 0.16s; }
+.dot:nth-child(3) { animation-delay: 0.32s; }
+@keyframes dotPulse {
+  0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+  40% { opacity: 1; transform: scale(1); }
+}
+
+/* ── Prompt Optimize Status ── */
+.hint.is-error { color: var(--danger, #ef4444); }
+
+.btn-secondary.is-loading { pointer-events: none; opacity: 0.7; }
+.field-hint {
+  font-size: clamp(11px, 1.3vw, 13px);
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.field-hint.hidden { display: none; }
+.field-hint.is-error { color: var(--danger, #ef4444); }
+
+/* ── Chat Model Picker (beautified) ── */
+.chat-model-picker {
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--primary, #3b82f6);
+  font-size: clamp(11px, 1.3vw, 13px);
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0 16px 0 0;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23999' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 2px center;
+  background-size: 10px;
+}
+
+.chat-model-picker:hover {
+  color: var(--primary-dark, #2563eb);
+}
+
+.chat-model-picker option {
+  color: var(--text, #1e293b);
+  background: var(--main-surface, #fff);
+  padding: 4px 8px;
+}
+
+/* ── Chat Input Textarea scroll fix ── */
+.chat-input::-webkit-scrollbar {
+  width: 4px;
+}
+.chat-input::-webkit-scrollbar-thumb {
+  background: var(--line-strong, #cbd5e1);
+  border-radius: 2px;
+}

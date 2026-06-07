@@ -1,0 +1,44 @@
+# Sensitive config files
+config.php
+config.php.bak*
+config/*.php
+!config/.check
+!config/blocked_words.php
+config.php.bak.20260606-161525
+config.php.bak.nexoapi.20260606-174149
+_DEPLOYMENT_AUDIT.md.bak*
+_config.php.bak*
+config.php.bak.fix*
+config.php.bak.brand*
+
+# Cookies and tokens
+*cookie*.txt
+*cookie*.json
+tmp_cookie.txt
+live_cookie.txt
+online_cookie.txt
+tmp_chat_v1.json
+tmp_image_v1.json
+最后回退到
+
+# Deployment artifacts
+_DEPLOYMENT_AUDIT.md
+*.bak*
+backup_*
+tmp_*
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Node packages (if any)
+node_modules/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
