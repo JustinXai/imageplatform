@@ -60,7 +60,7 @@ try {
     $hasActiveImageModel = !empty(active_ai_models());
     $hasGlobalImageConfig = trim((string) app_setting('image_base_url', '')) !== '' && trim((string) app_setting('image_api_key', '')) !== '';
     if (!$hasActiveImageModel && !$hasGlobalImageConfig) {
-        json_response(['ok' => false, 'message' => '?????????? AI ????????????????'], 503);
+        json_response(['ok' => false, 'message' => '无可用 AI 模型，请前往后台配置。'], 503);
     }
 
     // 同步生成使用较短超时（45秒），避免长时间占用 PHP-FPM 进程

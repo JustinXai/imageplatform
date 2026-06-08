@@ -27,7 +27,8 @@ function normalize_invoke_mode(string $value, string $modelType): string
 function normalize_edit_adapter(string $value): string
 {
     $value = strtolower(trim($value));
-    $allowed = ['none', 'nano_banana_image_urls', 'openai_edits_multipart'];
+    // 图片编辑适配器（仅限 Nano Banana 等图片编辑模型）
+    $allowed = ['none', 'nano_banana_image_urls', 'openai_edits_multipart', 'newtoken_async_reference'];
     return in_array($value, $allowed, true) ? $value : 'none';
 }
 
@@ -51,16 +52,19 @@ function normalize_reference_required(string $value): int
 function normalize_video_adapter(string $value): string
 {
     $value = strtolower(trim($value));
-    $allowed = ['none', 'kaiyuncode', 'relay'];
+    // 视频适配器（仅限视频模型）
+    $allowed = ['none', 'kaiyuncode', 'newtoken_video_async'];
     return in_array($value, $allowed, true) ? $value : 'none';
 }
 
 function render_edit_adapter_options(string $selected): string
 {
+    // 图片编辑适配器（仅用于 Nano Banana 等图片编辑模型）
     $options = [
         'none' => '不支持编辑（默认）',
         'nano_banana_image_urls' => 'nano_banana_image_urls',
         'openai_edits_multipart' => 'openai_edits_multipart',
+        'newtoken_async_reference' => 'newtoken_async_reference（Nano Banana）',
     ];
     $selected = normalize_edit_adapter($selected);
     $html = '';
@@ -186,24 +190,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $videoResolution = trim((string) ($_POST['video_resolution'] ?? 'auto'));
         $videoAspectRatio = trim((string) ($_POST['video_aspect_ratio'] ?? 'auto'));
 
-        if ($supportsEdit && $editAdapter === 'none') {
-            flash('error', '如果要启用编辑功能，请选择有效的编辑适配器（不能选择"不支持编辑"）。');
-            redirect('/admin/ai_models');
-        }
-
-        $supportsReference = (int) ($_POST['supports_reference'] ?? 0);
-        $referenceRequired = (int) ($_POST['reference_required'] ?? 0);
-        $maxReferenceImages = max(1, min(16, (int) ($_POST['max_reference_images'] ?? 1)));
-        $videoAdapter = normalize_video_adapter((string) ($_POST['video_adapter'] ?? 'none'));
-        $fixedSeconds = max(0, (int) ($_POST['fixed_seconds'] ?? 0));
-        $videoResolution = trim((string) ($_POST['video_resolution'] ?? 'auto'));
-        $videoAspectRatio = trim((string) ($_POST['video_aspect_ratio'] ?? 'auto'));
-
         if ($apiKey !== '') {
             $stmt = db()->prepare(
                 'UPDATE ai_models SET name=?, model_id=?, base_url=?, api_key=?, model_type=?, credits=?, invoke_mode=?, supports_edit=?, edit_adapter=?, edit_image_field=?, supports_reference=?, reference_required=?, max_reference_images=?, video_adapter=?, fixed_seconds=?, video_resolution=?, video_aspect_ratio=?, sort_order=?, is_active=? WHERE id=?'
             );
-            $stmt->execute([$name, $modelId, $baseUrl, $apiKey, $modelType, $credits, $invokeMode, $supportsEdit, $editAdapter, $editImageField, $sortOrder, $isActive, $id]);
+            $stmt->execute([$name, $modelId, $baseUrl, $apiKey, $modelType, $credits, $invokeMode, $supportsEdit, $editAdapter, $editImageField, $supportsReference, $referenceRequired, $maxReferenceImages, $videoAdapter, $fixedSeconds, $videoResolution, $videoAspectRatio, $sortOrder, $isActive, $id]);
         } else {
             $stmt = db()->prepare(
                 'UPDATE ai_models SET name=?, model_id=?, base_url=?, model_type=?, credits=?, invoke_mode=?, supports_edit=?, edit_adapter=?, edit_image_field=?, supports_reference=?, reference_required=?, max_reference_images=?, video_adapter=?, fixed_seconds=?, video_resolution=?, video_aspect_ratio=?, sort_order=?, is_active=? WHERE id=?'
@@ -392,7 +383,8 @@ table[data-admin-models] td:last-child {
                     </select>
                 </label>
                 <label class="field">
-                    <span>编辑适配器</span>
+                    <span>图片编辑适配器</span>
+                    <span class="field-label-hint">仅用于 Nano Banana 等图片编辑模型</span>
                     <select name="edit_adapter">
                         <?= render_edit_adapter_options('none') ?>
                     </select>
@@ -425,9 +417,11 @@ table[data-admin-models] td:last-child {
                 </label>
                 <label class="field">
                     <span>视频适配器</span>
+                    <span class="field-label-hint">仅用于视频模型（veo、seedance 等）</span>
                     <select name="video_adapter">
-                        <option value="none">默认</option>
+                        <option value="none">不支持视频（默认）</option>
                         <option value="kaiyuncode">kaiyuncode</option>
+                        <option value="newtoken_video_async">newtoken_video_async（NewToken 视频）</option>
                     </select>
                 </label>
             </div>
@@ -478,7 +472,8 @@ table[data-admin-models] td:last-child {
                         <th>类型</th>
                         <th>调用</th>
                         <th>编辑</th>
-                        <th>适配器</th>
+                        <th>图片编辑适配器</th>
+                        <th>视频适配器</th>
                         <th>参图</th>
                         <th>时长</th>
                         <th>点</th>
@@ -534,6 +529,13 @@ table[data-admin-models] td:last-child {
                                 <td>
                                     <select name="edit_adapter" class="compact-input" style="min-width: 140px;">
                                         <?= render_edit_adapter_options((string) ($m['edit_adapter'] ?? 'none')) ?>
+                                    </select>
+                                </td>
+                                <td>
+                                    <select name="video_adapter" class="compact-input" style="min-width: 120px;">
+                                        <option value="none" <?= ($m['video_adapter'] ?? 'none') === 'none' ? 'selected' : '' ?>>无</option>
+                                        <option value="kaiyuncode" <?= ($m['video_adapter'] ?? '') === 'kaiyuncode' ? 'selected' : '' ?>>kaiyuncode</option>
+                                        <option value="newtoken_video_async" <?= ($m['video_adapter'] ?? '') === 'newtoken_video_async' ? 'selected' : '' ?>>newtoken_video_async</option>
                                     </select>
                                 </td>
                                 <td>
