@@ -723,12 +723,38 @@ echo "\n\033[1;33m=== ADMIN PAGE PARTITION TESTS ===\033[0m\n\n";
 // (Simulated: snapshot has supports_edit=1, edit_adapter=newtoken_async_reference)
 {
     // This test verifies the fix by checking the file content
-    $prodFile = '/srv/nexoapi/src/image_generation.php';
+    $prodFile = '/home/ubuntu/imageplatform/src/image_generation.php';
     $content = file_exists($prodFile) ? file_get_contents($prodFile) : '';
     // The fix: generation_input_from_request now reads snapshot's supports_edit
     $checksSnapshot = strpos($content, "generation_config_snapshot") !== false
         && strpos($content, 'snapshotSupportsEdit') !== false;
     test('T41: generation_input_from_request reads snapshot for edit check', $checksSnapshot);
+}
+
+// T42: cleanup preserves existing error_message
+{
+    $prodFile = '/home/ubuntu/imageplatform/src/image_generation.php';
+    $content = file_exists($prodFile) ? file_get_contents($prodFile) : '';
+    // cleanup should check existing error_message before overwriting
+    // Proof: cleanup queries existing error_message and skips if non-empty
+    $hasPreserveCheck = strpos($content, 'existingErr') !== false
+        && strpos($content, 'pdoChk') !== false
+        && strpos($content, 'error_message') !== false;
+    test('T42: cleanup preserves existing error_message (no overwrite)', $hasPreserveCheck);
+}
+
+// T43: supports_edit check uses int comparison (not === true)
+{
+    $prodFile = '/home/ubuntu/imageplatform/src/image_generation.php';
+    $content = file_exists($prodFile) ? file_get_contents($prodFile) : $content = '';
+    // Check production file
+    $prodContent = file_exists('/srv/nexoapi/src/image_generation.php')
+        ? file_get_contents('/srv/nexoapi/src/image_generation.php') : '';
+    // The bug was: ($config['supports_edit'] ?? false) === true
+    // The fix is: (int)($config['supports_edit'] ?? 0) === 1
+    $usesIntCheck = strpos($prodContent, "(int)(\$config['supports_edit'] ?? 0) === 1") !== false
+        || strpos($prodContent, "(int) (\$config['supports_edit'] ?? 0) === 1") !== false;
+    test('T43: supports_edit uses int check (not === true)', $usesIntCheck);
 }
 
 // ============================================================

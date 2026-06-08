@@ -4335,7 +4335,7 @@ function perform_generation_record(int $recordId, ?int $timeout = null): array
     $config = resolve_image_generation_config($record);
 
     if (($record['mode'] ?? 'draw') === 'edit') {
-        $supportsEdit = ($config['supports_edit'] ?? false) === true;
+        $supportsEdit = (int)($config['supports_edit'] ?? 0) === 1;
         $editAdapter  = trim((string) ($config['edit_adapter'] ?? ''));
         $maxReferenceImages = max(1, (int) ($config['max_reference_images'] ?? max_edit_images()));
         $inputImages = json_decode((string) ($record['input_images_json'] ?? ''), true);
@@ -4881,7 +4881,7 @@ function fail_generation_record_with_refund(int $recordId, string $message): boo
 
         $stmt = $pdo->prepare(
 
-            'SELECT id, user_id, credits_cost, status
+            'SELECT id, user_id, credits_cost, status, error_message
 
              FROM generation_records
 
@@ -4904,6 +4904,13 @@ function fail_generation_record_with_refund(int $recordId, string $message): boo
         }
 
 
+
+                // PRESERVE existing error_message — never overwrite with generic timeout
+        $existingMsg = trim((string) ($record['error_message'] ?? ''));
+        if ($existingMsg !== '') {
+            $pdo->commit();
+            return false;
+        }
 
         $charged = (int) $record['credits_cost'];
 
@@ -5053,16 +5060,25 @@ function cleanup_stale_running_generation_records(): int
             continue;
         }
 
-        if ($isAsyncTask) {
-            $msg = ($mode === 'video')
-                ? '视频生成等待超时，上游长时间未返回结果，余额已自动退回。请稍后重试。'
-                : '生成任务等待超时，上游长时间未返回结果，余额已自动退回。请稍后重试。';
-        } else {
-            $msg = '生成任务等待超时，余额已自动退回。请稍后重试。';
-        }
-
-        if (fail_generation_record_with_refund($id, $msg)) {
-            $count++;
+        // Only write timeout message if error_message is currently empty.
+        // If worker already set a real error (e.g. "当前模型不支持图片编辑"),
+        // do NOT overwrite it with a generic timeout message.
+        $pdoChk = db();
+        $stmtChk = $pdoChk->prepare('SELECT error_message FROM generation_records WHERE id = ? LIMIT 1');
+        $stmtChk->execute([$id]);
+        $rowChk = $stmtChk->fetch();
+        $existingErr = is_array($rowChk) ? trim((string) ($rowChk['error_message'] ?? '')) : '';
+        if ($existingErr === '') {
+            if ($isAsyncTask) {
+                $msg = ($mode === 'video')
+                    ? '视频生成等待超时，上游长时间未返回结果，余额已自动退回。请稍后重试。'
+                    : '生成任务等待超时，上游长时间未返回结果，余额已自动退回。请稍后重试。';
+            } else {
+                $msg = '生成任务等待超时，余额已自动退回。请稍后重试。';
+            }
+            if (fail_generation_record_with_refund($id, $msg)) {
+                $count++;
+            }
         }
     }
 
