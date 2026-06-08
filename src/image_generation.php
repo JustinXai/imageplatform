@@ -865,6 +865,11 @@ function generation_response_record(array $record): array
         'finished_at'    => $record['finished_at'] ?: '-',
         'error_message'  => (string) ($record['error_message'] ?: ''),
         'input_image_count' => generation_input_image_count($record),
+        // New selection fields
+        'selected_aspect'        => $record['selected_aspect'] ?: '',
+        'selected_size'          => $record['selected_size'] ?: '',
+        'selected_duration'      => $record['selected_duration'] ? (int) $record['selected_duration'] : 0,
+        'selected_video_mode'    => $record['selected_video_mode'] ?: '',
     ];
 
     if ($isVideo) {

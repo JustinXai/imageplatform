@@ -457,6 +457,34 @@ echo "\n-- T20: Invalid duration throws exception (reject before charge) --\n";
     test('Invalid duration 999 throws exception (reject before charge)', $ok);
 }
 
+// T21: Verify video payload result structure for newtoken_video_async
+echo "\n-- T21: newtoken_video_async payload result structure --\n";
+{
+    // The newtoken payload field mapping is verified via video_payload_formats() code review:
+    // - $payload[$durationField] = duration (never 'seconds')
+    // - $payload[$aspectField] = aspect if not auto
+    // - $payload[$sizeField] = size if not auto
+    // - $payload[$inputModeField] = video_mode
+    // - $payload[$refField] = refUrls
+    // Here we verify validate_video_input returns correct structured values.
+    $cfg = $configs[5] ?? null;
+    $result = null;
+    try {
+        $result = validate_video_input(5, 'multi_reference', 10, '16:9', 'auto', [], $cfg);
+    } catch (Throwable $e) {
+        echo "    \033[33m[WARN]\033[0m {$e->getMessage()}\n";
+    }
+    if ($result !== null) {
+        test('video_mode = multi_reference', ($result['video_mode'] ?? '') === 'multi_reference');
+        test('video_duration = 10', ($result['video_duration'] ?? 0) === 10);
+        test('video_aspect = 16:9', ($result['video_aspect'] ?? '') === '16:9');
+        test('video_size = auto', ($result['video_size'] ?? '') === 'auto');
+        test('credits_charged = 6*10=60', ($result['credits_charged'] ?? 0) === 60);
+    } else {
+        test('validate_video_input returned non-null result', false, 'result was null — check config structure');
+    }
+}
+
 // ============================================================
 // SUMMARY
 // ============================================================

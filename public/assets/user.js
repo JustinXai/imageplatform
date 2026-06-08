@@ -78,13 +78,39 @@ const SIZE_LABELS = {
   '1024x1536': '1024×1536', '2048x2048': '2048×2048',
 };
 
+const updateAspectOptions = () => {
+  const aspectSelect = document.getElementById('image_aspect');
+  if (!aspectSelect) return;
+  const meta = getSelectedModelMeta();
+  if (!meta) return;
+
+  let opts = [];
+  try {
+    const raw = meta.image_aspect_options;
+    if (Array.isArray(raw) && raw.length > 0) opts = raw;
+  } catch (_) {}
+  if (!opts.length) {
+    try { const a = JSON.parse(aspectSelect.closest('.model-chip').querySelector('option:checked')?.dataset.aspectOptions || '[]'); if (a.length) opts = a; } catch (_) {}
+  }
+  if (!opts.length) opts = Object.keys(ASPECT_LABELS);
+
+  const defaultAspect = meta.image_default_aspect || 'auto';
+  aspectSelect.innerHTML = '';
+  opts.forEach(v => {
+    const opt = document.createElement('option');
+    opt.value = v;
+    opt.textContent = ASPECT_LABELS[v] || v;
+    if (v === defaultAspect) opt.selected = true;
+    aspectSelect.appendChild(opt);
+  });
+};
+
 const updateSizeOptions = () => {
   const sizeSelect = document.getElementById('image_size');
   if (!sizeSelect) return;
   const meta = getSelectedModelMeta();
   if (!meta) return;
 
-  // Get options from JSON or fallback to data attributes
   let opts = [];
   try {
     const raw = meta.image_size_options;
@@ -93,18 +119,14 @@ const updateSizeOptions = () => {
   if (!opts.length) {
     try { const a = JSON.parse(sizeSelect.closest('.model-chip').querySelector('option:checked')?.dataset.sizeOptions || '[]'); if (a.length) opts = a; } catch (_) {}
   }
-
-  // Fallback to all options if nothing configured
-  if (!opts.length) {
-    opts = Object.keys(ASPECT_LABELS);
-  }
+  if (!opts.length) opts = Object.keys(SIZE_LABELS);
 
   const defaultSize = meta.image_default_size || 'auto';
   sizeSelect.innerHTML = '';
   opts.forEach(v => {
     const opt = document.createElement('option');
     opt.value = v;
-    opt.textContent = SIZE_LABELS[v] || ASPECT_LABELS[v] || v;
+    opt.textContent = SIZE_LABELS[v] || v;
     if (v === defaultSize) opt.selected = true;
     sizeSelect.appendChild(opt);
   });
@@ -128,8 +150,30 @@ const createRecordCard = (record) => {
   article.dataset.inputCount = record.input_image_count || 0;
   article.style.cursor = "pointer";
 
-  const label = record.mode === "edit" ? "编辑" : "绘画";
-  const src = record.image_src || record.video_src;
+  // Build display label for record mode
+  const modeLabel = record.mode === "edit" ? "编辑" : (record.mode === "video" ? "视频" : "绘画");
+  const videoModeLabels = {
+    'text_to_video': '文生视频',
+    'first_frame': '首帧',
+    'first_last_frame': '首尾帧',
+    'multi_reference': '多帧',
+  };
+  const recVideoMode = record.selected_video_mode || '';
+  const recVideoModeLabel = videoModeLabels[recVideoMode] || recVideoMode || '';
+
+  // Build meta string: mode / aspect / size / duration / credits
+  const recAspect = record.selected_aspect || '—';
+  const recSize = record.selected_size || record.size || 'auto';
+  const recDuration = record.selected_duration ? record.selected_duration + '秒' : '';
+  const recCredits = record.credits_charged ? record.credits_charged + '点' : '';
+  const recModeStr = record.mode === 'video'
+    ? (recVideoModeLabel ? recVideoModeLabel : modeLabel)
+    : modeLabel;
+  const metaParts = [recModeStr];
+  if (recAspect && recAspect !== '—') metaParts.push(recAspect);
+  metaParts.push(recSize);
+  if (recDuration) metaParts.push(recDuration);
+  if (recCredits) metaParts.push(recCredits);
 
   article.innerHTML = `
     ${record.video_src
@@ -142,7 +186,7 @@ const createRecordCard = (record) => {
       <div class="prompt">${escapeHtml(record.prompt)}</div>
       <div class="meta">
         <span class="status-badge ${escapeHtml(record.status)}">${escapeHtml(statusText(record.status))}</span>
-        <span>${escapeHtml(label)} / ${escapeHtml(record.size)}</span>
+        <span>${escapeHtml(metaParts.join(' / '))}</span>
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px;">
         <time style="font-size:10px;color:var(--text-muted);">${escapeHtml(record.created_at)}</time>
@@ -342,7 +386,8 @@ if (modelSelect) {
     if (costVal) {
       costVal.textContent = credits > 0 ? credits : "1";
     }
-    // Update size options dynamically based on selected model
+    // Update aspect and size options dynamically based on selected model
+    updateAspectOptions();
     updateSizeOptions();
     // Update edit mode visibility based on model supports_edit
     const selectedMode = document.querySelector('input[name="mode"]:checked')?.value || "draw";

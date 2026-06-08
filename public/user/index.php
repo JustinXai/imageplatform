@@ -137,6 +137,14 @@ render_header('图片生成器', 'app');
                         <?php endif; ?>
                     </div>
                     <div class="field-v3">
+                        <label for="image_aspect">图片比例</label>
+                        <div class="model-chip">
+                            <select name="image_aspect" id="image_aspect">
+                                <option value="">加载中...</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="field-v3">
                         <label for="image_size">图片尺寸</label>
                         <div class="model-chip">
                             <select name="size" id="image_size">

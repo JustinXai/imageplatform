@@ -84,15 +84,32 @@ function is_image_model_area(array $m): bool
     $mid = strtolower(trim($m['model_id'] ?? ''));
     if ($type === 'image') return true;
     if ($type === 'chat') return true;
-    if (strpos($name, 'banana') !== false || strpos($name, 'nana') !== false) return true;
-    if (strpos($mid, 'banana') !== false || strpos($mid, 'nana') !== false) return true;
-    if (strpos($name, 'gpt-image') !== false || strpos($mid, 'gpt-image') !== false) return true;
+    // Explicit image model name patterns
+    if (strpos($name, 'banana') !== false) return true;
+    if (strpos($mid, 'banana') !== false) return true;
+    if (strpos($name, 'nana') !== false) return true;
+    if (strpos($mid, 'nana') !== false) return true;
+    if (strpos($name, 'gpt-image') !== false) return true;
+    if (strpos($mid, 'gpt-image') !== false) return true;
     return false;
 }
 
 function is_video_model_area(array $m): bool
 {
-    return !is_image_model_area($m);
+    $type = strtolower(trim($m['model_type'] ?? 'image'));
+    $name = strtolower(trim($m['name'] ?? ''));
+    $mid = strtolower(trim($m['model_id'] ?? ''));
+    if ($type === 'video') return true;
+    // Explicit video model name patterns
+    if (strpos($name, 'veo') !== false) return true;
+    if (strpos($mid, 'veo') !== false) return true;
+    if (strpos($name, 'seedance') !== false) return true;
+    if (strpos($mid, 'seedance') !== false) return true;
+    if (strpos($name, 'video-pro') !== false) return true;
+    if (strpos($mid, 'video-pro') !== false) return true;
+    if (strpos($name, 'sora') !== false) return true;
+    if (strpos($mid, 'sora') !== false) return true;
+    return false;
 }
 
 /* ------------------------------------------------------------------ */
@@ -311,6 +328,7 @@ $allModels = $stmt->fetchAll();
 
 $imageModels = array_filter($allModels, 'is_image_model_area');
 $videoModels = array_filter($allModels, 'is_video_model_area');
+$otherModels = array_filter($allModels, fn($m) => !is_image_model_area($m) && !is_video_model_area($m));
 
 /* ------------------------------------------------------------------ */
 /*  Helpers for rendering options                                      */
@@ -1083,6 +1101,50 @@ table[data-admin-models] th {
         <p class="muted" style="padding:16px;">暂无视频模型，请在上方添加。</p>
         <?php endif; ?>
     </section>
+
+    <?php if (!empty($otherModels)): ?>
+    <section class="card" style="margin-bottom:24px;">
+        <div class="card-head">
+            <div>
+                <span class="model-section-badge" style="background:#f3e5f5;color:#6a1b9a;">其它模型</span>
+                <h2>未分类模型</h2>
+            </div>
+            <span class="badge">共 <?= count($otherModels) ?> 个</span>
+        </div>
+        <p style="padding:8px 16px;font-size:13px;color:var(--text-muted);">
+            以下模型未匹配图片或视频分类规则，不会出现在图片/视频用户界面中。
+            如需启用，请修改模型名称或类型，或联系管理员。
+        </p>
+        <div style="overflow-x:auto;">
+            <table data-admin-models style="width:100%;min-width:600px;">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>名称</th>
+                        <th>模型 ID</th>
+                        <th>类型</th>
+                        <th>视频适配器</th>
+                        <th>编辑适配器</th>
+                        <th>状态</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($otherModels as $m): ?>
+                    <tr>
+                        <td><?= (int) $m['id'] ?></td>
+                        <td><?= e($m['name']) ?></td>
+                        <td><?= e($m['model_id']) ?></td>
+                        <td><?= e($m['model_type'] ?? 'image') ?></td>
+                        <td><?= e($m['video_adapter'] ?? '—') ?></td>
+                        <td><?= e($m['edit_adapter'] ?? '—') ?></td>
+                        <td><?= (int) $m['is_active'] === 1 ? '启用' : '关闭' ?></td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </section>
+    <?php endif; ?>
 </main>
 
 <script>
