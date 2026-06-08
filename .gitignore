@@ -42,3 +42,60 @@ node_modules/
 .vscode/
 *.swp
 *.swo
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.token
+*secret*
+*secrets*
+
+# Runtime data
+storage/logs/
+storage/cache/
+storage/sessions/
+storage/tmp/
+runtime/
+cache/
+tmp/
+*.log
+
+# User uploads / generated media
+public/uploads/
+
+# Backups / dumps
+*.backup
+*.old
+*.orig
+*.save
+*.sql
+*.sql.gz
+*.tar
+*.tar.gz
+*.zip
+*.7z
+
+# Temporary scripts
+scripts_moved/
+*.disabled
+
+# PM2
+dump.pm2
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Bundles with potential secrets
+kaiyun_docs_bundle.js
+kbl6_pricing_bundle.js
+
+# Installer docs
+安装教程.html
+_NOT_PRODUCTION_README.txt

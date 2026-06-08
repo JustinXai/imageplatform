@@ -169,15 +169,84 @@ const prependRecordCard = (record) => {
   historyList.prepend(createRecordCard(record));
 };
 
+// Model-specific video options: supports_reference, fixed_seconds, read-only resolution/aspect_ratio
 const videoModelSelect = document.getElementById("ai_model_id");
+const sizeSelect = document.getElementById("size");
+const resolutionSelect = document.getElementById("resolution");
+const maxRefCount = document.querySelector("[data-max-ref-count]");
+
+const getSelectedModelData = () => {
+  if (!videoModelSelect) return {};
+  try {
+    const models = JSON.parse(videoModelSelect.dataset.videoModels || "[]");
+    return models.find(m => m.id === parseInt(videoModelSelect.value, 10)) || {};
+  } catch (_) { return {}; }
+};
+
+const syncModelOptions = (modelData) => {
+  const supportsRef = parseInt(modelData?.supports_reference || "0", 10);
+  const refRequired = parseInt(modelData?.reference_required || "0", 10);
+  const imageModeLabel = document.querySelector("[data-video-mode-with-image]");
+
+  if (imageModeLabel) {
+    imageModeLabel.style.display = supportsRef === 1 ? "" : "none";
+  }
+
+  if (maxRefCount) {
+    const maxRef = parseInt(modelData?.max_reference_images || "1", 10);
+    maxRefCount.textContent = maxRef;
+    if (uploadInput) uploadInput.dataset.maxFiles = String(maxRef);
+  }
+
+  const fixedRes = modelData?.video_resolution || "auto";
+  const fixedRatio = modelData?.video_aspect_ratio || "auto";
+
+  if (sizeSelect) {
+    if (fixedRatio !== "auto") {
+      sizeSelect.value = fixedRatio;
+      sizeSelect.disabled = true;
+      sizeSelect.title = "由模型固定配置";
+    } else {
+      sizeSelect.disabled = false;
+      sizeSelect.title = "";
+    }
+  }
+
+  if (resolutionSelect) {
+    if (fixedRes !== "auto") {
+      resolutionSelect.value = fixedRes;
+      resolutionSelect.disabled = true;
+      resolutionSelect.title = "由模型固定配置";
+    } else {
+      resolutionSelect.disabled = false;
+      resolutionSelect.title = "";
+    }
+  }
+
+  const credits = parseInt(modelData?.credits || "0", 10);
+  const fixedSeconds = parseInt(modelData?.fixed_seconds || "0", 10);
+  const costVal = document.querySelector("[data-cost-value]");
+  const costSecondsInfo = document.querySelector("[data-cost-seconds-info]");
+
+  if (costVal && credits > 0) {
+    costVal.textContent = credits + (fixedSeconds > 0 ? " × " + fixedSeconds + "s" : "");
+  }
+
+  if (costSecondsInfo) {
+    costSecondsInfo.style.display = fixedSeconds > 0 ? "inline" : "none";
+    costSecondsInfo.textContent = fixedSeconds > 0 ? "(固定时长" + fixedSeconds + "秒)" : "";
+  }
+
+  if (uploadHint) {
+    uploadHint.dataset.refRequired = String(refRequired);
+  }
+};
+
 if (videoModelSelect) {
   videoModelSelect.addEventListener("change", () => {
-    const opt = videoModelSelect.selectedOptions[0];
-    const credits = parseInt(opt?.dataset.credits || "0", 10);
-    const costVal = document.querySelector("[data-cost-value]");
-    if (costVal && credits > 0) costVal.textContent = credits;
+    syncModelOptions(getSelectedModelData());
   });
-  videoModelSelect.dispatchEvent(new Event("change"));
+  syncModelOptions(getSelectedModelData());
 }
 
 videoModeInputs.forEach((input) => {
@@ -209,9 +278,13 @@ form?.addEventListener("submit", async (event) => {
   if (isGenerating) return;
 
   const mode = activeVideoMode();
+  const refRequired = uploadHint?.dataset.refRequired === "1";
+
   if (mode === "image" && selectedFiles.length === 0) {
-    showErrorDialog("图生视频模式至少需要上传一张参考图片。");
-    return;
+    if (refRequired) {
+      showErrorDialog("当前模型要求必须上传参考图片。");
+      return;
+    }
   }
 
   if (uploadInput) uploadInput.value = "";

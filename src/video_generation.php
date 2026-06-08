@@ -334,6 +334,38 @@ function call_kaiyuncode_video_generation_api(string $baseUrl, string $apiKey, a
  */
 function resolve_video_generation_config(array $record): array
 {
+    // 优先使用配置快照锛堝垱寤轰娇鍓嶇殑閰嶇疆锛?
+    $snapshotJson = (string) ($record['generation_config_snapshot'] ?? '');
+    if ($snapshotJson !== '') {
+        $snapshot = json_decode($snapshotJson, true);
+        if (is_array($snapshot) && !empty($snapshot['model'])) {
+            $baseUrl = (string) ($snapshot['base_url'] ?? '');
+            if ($baseUrl !== '') {
+                $snapshotModelId = (int) ($snapshot['model_id'] ?? 0);
+                if ($snapshotModelId > 0) {
+                    $stmt = db()->prepare("SELECT api_key FROM ai_models WHERE id = ? AND is_active = 1 AND model_type = 'video' LIMIT 1");
+                    $stmt->execute([$snapshotModelId]);
+                    $apiKey = (string) $stmt->fetchColumn();
+                    if ($apiKey !== '') {
+                        return [
+                            'base_url' => rtrim($baseUrl, '/'),
+                            'api_key'  => $apiKey,
+                            'model'    => (string) $snapshot['model'],
+                            'invoke_mode' => (string) ($snapshot['invoke_mode'] ?? 'relay'),
+                            'supports_reference' => (int) ($snapshot['supports_reference'] ?? 0),
+                            'reference_required' => (int) ($snapshot['reference_required'] ?? 0),
+                            'max_reference_images' => max(1, (int) ($snapshot['max_reference_images'] ?? 1)),
+                            'video_adapter' => (string) ($snapshot['video_adapter'] ?? 'none'),
+                            'fixed_seconds' => max(0, (int) ($snapshot['fixed_seconds'] ?? 0)),
+                            'video_resolution' => (string) ($snapshot['video_resolution'] ?? 'auto'),
+                            'video_aspect_ratio' => (string) ($snapshot['video_aspect_ratio'] ?? 'auto'),
+                        ];
+                    }
+                }
+            }
+        }
+    }
+
     $pdo = db();
     $modelId = (int) ($record['ai_model_id'] ?? 0);
 
@@ -342,13 +374,20 @@ function resolve_video_generation_config(array $record): array
         $stmt->execute([$modelId]);
         $modelConfig = $stmt->fetch();
         if (!$modelConfig) {
-            throw new RuntimeException('所选视频模型不可用，请刷新页面重试。');
+            throw new RuntimeException('鎵€閫夎嗛槧妯″瀷涓嶅彲鐢ㄣ€佹�楠岃法椤甸潰閲嶈瘯銆?');
         }
         return [
             'base_url' => rtrim((string) $modelConfig['base_url'], '/'),
             'api_key'  => (string) $modelConfig['api_key'],
             'model'    => (string) $modelConfig['model_id'],
             'invoke_mode' => normalize_video_invoke_mode($modelConfig['invoke_mode'] ?? 'relay'),
+            'supports_reference' => (int) ($modelConfig['supports_reference'] ?? 0),
+            'reference_required' => (int) ($modelConfig['reference_required'] ?? 0),
+            'max_reference_images' => max(1, (int) ($modelConfig['max_reference_images'] ?? 1)),
+            'video_adapter' => (string) ($modelConfig['video_adapter'] ?? 'none'),
+            'fixed_seconds' => max(0, (int) ($modelConfig['fixed_seconds'] ?? 0)),
+            'video_resolution' => (string) ($modelConfig['video_resolution'] ?? 'auto'),
+            'video_aspect_ratio' => (string) ($modelConfig['video_aspect_ratio'] ?? 'auto'),
         ];
     }
 
@@ -357,7 +396,7 @@ function resolve_video_generation_config(array $record): array
     $model   = (string) app_setting('video_model', '');
 
     if ($baseUrl === '' || $apiKey === '') {
-        throw new RuntimeException('管理员尚未配置视频生成接口。');
+        throw new RuntimeException('绠\$ admin 鍚庤韩鍙浠呰剧疆鑰嗛槧鐢熸垚鎺ュ彛銆?');
     }
 
     return [
@@ -365,6 +404,13 @@ function resolve_video_generation_config(array $record): array
         'api_key'  => $apiKey,
         'model'    => $model,
         'invoke_mode' => 'relay',
+        'supports_reference' => 0,
+        'reference_required' => 0,
+        'max_reference_images' => 1,
+        'video_adapter' => 'none',
+        'fixed_seconds' => 0,
+        'video_resolution' => 'auto',
+        'video_aspect_ratio' => 'auto',
     ];
 }
 
@@ -631,7 +677,7 @@ function video_record_status_from_task(string $status): string
     return 'running';
 }
 
-function poll_kaiyuncode_video_task(string $baseUrl, string $apiKey, string $taskId, int $recordId, int $timeout = 300): void
+function poll_kaiyuncode_video_task(string $baseUrl, string $apiKey, string $taskId, int $recordId, int $timeout = 3600): void
 {
     $startTime = time();
     $interval = 5;
@@ -684,7 +730,7 @@ function poll_kaiyuncode_video_task(string $baseUrl, string $apiKey, string $tas
         sleep($interval);
     }
 
-    throw new RuntimeException('视频生成任务轮询超时（' . $timeout . '秒），请稍后刷新页面查看结果。');
+    throw new RuntimeException('视频生成等待超时，上游长时间未返回结果，余额已自动退回。请稍后重试。');
 }
 
 /**
@@ -699,7 +745,7 @@ function poll_kaiyuncode_video_task(string $baseUrl, string $apiKey, string $tas
  * @return void
  * @throws RuntimeException
  */
-function poll_video_task(string $baseUrl, string $apiKey, string $taskId, int $recordId, int $timeout = 300): void
+function poll_video_task(string $baseUrl, string $apiKey, string $taskId, int $recordId, int $timeout = 3600): void
 {
     $startTime = time();
     $interval  = 5; // 每 5 秒轮询一次
@@ -757,7 +803,7 @@ function poll_video_task(string $baseUrl, string $apiKey, string $taskId, int $r
         sleep($interval);
     }
 
-    throw new RuntimeException('视频生成任务轮询超时（' . $timeout . '秒），请稍后刷新页面查看结果。');
+    throw new RuntimeException('视频生成等待超时，上游长时间未返回结果，余额已自动退回。请稍后重试。');
 }
 
 /**
@@ -836,9 +882,23 @@ function perform_video_generation_record(int $recordId, ?int $timeout = null): a
     $record  = generation_record_by_id($recordId);
     $timeout = $timeout ?? max(60, (int) config('generation.timeout', 600));
 
+    // 优先使用配置快照锛堝垱寤轰娇鍓嶇殑閰嶇疆锛?
+    $record = apply_generation_config_snapshot($record);
+
     $config = resolve_video_generation_config($record);
     $record['model'] = $config['model'];
     $record['invoke_mode'] = $config['invoke_mode'];
+
+    // 鍒涓嶇敤绠 admin 鍚庡惎鍔ㄧ殑閰嶇疆锛岀敤浠诲姟鍒涘紝当时的閰嶇疆
+    if (!empty($config['fixed_seconds'])) {
+        $record['seconds'] = $config['fixed_seconds'];
+    }
+    if (!empty($config['video_resolution']) && $config['video_resolution'] !== 'auto') {
+        $record['quality'] = $config['video_resolution'];
+    }
+    if (!empty($config['video_aspect_ratio']) && $config['video_aspect_ratio'] !== 'auto') {
+        $record['size'] = $config['video_aspect_ratio'];
+    }
 
     try {
         if ($config['invoke_mode'] === 'kaiyuncode') {

@@ -510,6 +510,20 @@ function ensure_generation_records_video_columns(): void
     if (empty($columns['updated_at'])) {
         db()->exec('ALTER TABLE generation_records ADD COLUMN updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER created_at');
     }
+    if (empty($columns['remote_task_id'])) {
+        db()->exec('ALTER TABLE generation_records ADD COLUMN remote_task_id VARCHAR(191) NULL AFTER video_task_response');
+    }
+    if (empty($columns['remote_status'])) {
+        db()->exec('ALTER TABLE generation_records ADD COLUMN remote_status VARCHAR(50) NULL AFTER remote_task_id');
+    }
+    if (empty($columns['last_poll_at'])) {
+        db()->exec('ALTER TABLE generation_records ADD COLUMN last_poll_at DATETIME NULL AFTER remote_status');
+    }
+
+
+    if (empty($columns['generation_config_snapshot'])) {
+        db()->exec('ALTER TABLE generation_records ADD COLUMN generation_config_snapshot LONGTEXT NULL AFTER ai_model_id');
+    }
 
     $checked = true;
 }
@@ -551,6 +565,34 @@ function ensure_ai_models_type_column(): void
 
     if (empty($columns['edit_image_field'])) {
         db()->exec("ALTER TABLE ai_models ADD COLUMN edit_image_field VARCHAR(50) NOT NULL DEFAULT 'image_urls' AFTER edit_adapter");
+    }
+
+    if (empty($columns['supports_reference'])) {
+        db()->exec("ALTER TABLE ai_models ADD COLUMN supports_reference TINYINT(1) NOT NULL DEFAULT 0 AFTER edit_image_field");
+    }
+
+    if (empty($columns['reference_required'])) {
+        db()->exec("ALTER TABLE ai_models ADD COLUMN reference_required TINYINT(1) NOT NULL DEFAULT 0 AFTER supports_reference");
+    }
+
+    if (empty($columns['max_reference_images'])) {
+        db()->exec("ALTER TABLE ai_models ADD COLUMN max_reference_images TINYINT UNSIGNED NOT NULL DEFAULT 1 AFTER reference_required");
+    }
+
+    if (empty($columns['video_adapter'])) {
+        db()->exec("ALTER TABLE ai_models ADD COLUMN video_adapter VARCHAR(32) NOT NULL DEFAULT 'none' AFTER max_reference_images");
+    }
+
+    if (empty($columns['fixed_seconds'])) {
+        db()->exec("ALTER TABLE ai_models ADD COLUMN fixed_seconds TINYINT UNSIGNED NOT NULL DEFAULT 0 AFTER video_adapter");
+    }
+
+    if (empty($columns['video_resolution'])) {
+        db()->exec("ALTER TABLE ai_models ADD COLUMN video_resolution VARCHAR(16) NOT NULL DEFAULT 'auto' AFTER fixed_seconds");
+    }
+
+    if (empty($columns['video_aspect_ratio'])) {
+        db()->exec("ALTER TABLE ai_models ADD COLUMN video_aspect_ratio VARCHAR(10) NOT NULL DEFAULT 'auto' AFTER video_resolution");
     }
 
     $checked = true;

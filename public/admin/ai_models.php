@@ -38,6 +38,23 @@ function normalize_edit_image_field(string $value): string
     return in_array($value, $allowed, true) ? $value : 'image_urls';
 }
 
+function normalize_supports_reference(string $value): int
+{
+    return (int) $value === 1 ? 1 : 0;
+}
+
+function normalize_reference_required(string $value): int
+{
+    return (int) $value === 1 ? 1 : 0;
+}
+
+function normalize_video_adapter(string $value): string
+{
+    $value = strtolower(trim($value));
+    $allowed = ['none', 'kaiyuncode', 'relay'];
+    return in_array($value, $allowed, true) ? $value : 'none';
+}
+
 function render_edit_adapter_options(string $selected): string
 {
     $options = [
@@ -120,6 +137,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $supportsEdit = (int) ($_POST['supports_edit'] ?? 0);
         $editAdapter = normalize_edit_adapter((string) ($_POST['edit_adapter'] ?? 'none'));
         $editImageField = normalize_edit_image_field((string) ($_POST['edit_image_field'] ?? 'image_urls'));
+        $supportsReference = (int) ($_POST['supports_reference'] ?? 0);
+        $referenceRequired = (int) ($_POST['reference_required'] ?? 0);
+        $maxReferenceImages = max(1, min(16, (int) ($_POST['max_reference_images'] ?? 1)));
+        $videoAdapter = normalize_video_adapter((string) ($_POST['video_adapter'] ?? 'none'));
+        $fixedSeconds = max(0, (int) ($_POST['fixed_seconds'] ?? 0));
+        $videoResolution = trim((string) ($_POST['video_resolution'] ?? 'auto'));
+        $videoAspectRatio = trim((string) ($_POST['video_aspect_ratio'] ?? 'auto'));
 
         if ($supportsEdit && $editAdapter === 'none') {
             flash('error', '如果要启用编辑功能，请选择有效的编辑适配器（不能选择"不支持编辑"）。');
@@ -127,9 +151,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $stmt = db()->prepare(
-            'INSERT INTO ai_models (name, model_id, base_url, api_key, model_type, credits, invoke_mode, supports_edit, edit_adapter, edit_image_field, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            'INSERT INTO ai_models (name, model_id, base_url, api_key, model_type, credits, invoke_mode, supports_edit, edit_adapter, edit_image_field, supports_reference, reference_required, max_reference_images, video_adapter, fixed_seconds, video_resolution, video_aspect_ratio, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
-        $stmt->execute([$name, $modelId, $baseUrl, $apiKey, $modelType, $credits, $invokeMode, $supportsEdit, $editAdapter, $editImageField, $sortOrder]);
+        $stmt->execute([$name, $modelId, $baseUrl, $apiKey, $modelType, $credits, $invokeMode, $supportsEdit, $editAdapter, $editImageField, $supportsReference, $referenceRequired, $maxReferenceImages, $videoAdapter, $fixedSeconds, $videoResolution, $videoAspectRatio, $sortOrder]);
         flash('success', '模型已添加。');
         redirect('/admin/ai_models');
     }
@@ -154,22 +178,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $supportsEdit = (int) ($_POST['supports_edit'] ?? 0);
         $editAdapter = normalize_edit_adapter((string) ($_POST['edit_adapter'] ?? 'none'));
         $editImageField = normalize_edit_image_field((string) ($_POST['edit_image_field'] ?? 'image_urls'));
+        $supportsReference = (int) ($_POST['supports_reference'] ?? 0);
+        $referenceRequired = (int) ($_POST['reference_required'] ?? 0);
+        $maxReferenceImages = max(1, min(16, (int) ($_POST['max_reference_images'] ?? 1)));
+        $videoAdapter = normalize_video_adapter((string) ($_POST['video_adapter'] ?? 'none'));
+        $fixedSeconds = max(0, (int) ($_POST['fixed_seconds'] ?? 0));
+        $videoResolution = trim((string) ($_POST['video_resolution'] ?? 'auto'));
+        $videoAspectRatio = trim((string) ($_POST['video_aspect_ratio'] ?? 'auto'));
 
         if ($supportsEdit && $editAdapter === 'none') {
             flash('error', '如果要启用编辑功能，请选择有效的编辑适配器（不能选择"不支持编辑"）。');
             redirect('/admin/ai_models');
         }
 
+        $supportsReference = (int) ($_POST['supports_reference'] ?? 0);
+        $referenceRequired = (int) ($_POST['reference_required'] ?? 0);
+        $maxReferenceImages = max(1, min(16, (int) ($_POST['max_reference_images'] ?? 1)));
+        $videoAdapter = normalize_video_adapter((string) ($_POST['video_adapter'] ?? 'none'));
+        $fixedSeconds = max(0, (int) ($_POST['fixed_seconds'] ?? 0));
+        $videoResolution = trim((string) ($_POST['video_resolution'] ?? 'auto'));
+        $videoAspectRatio = trim((string) ($_POST['video_aspect_ratio'] ?? 'auto'));
+
         if ($apiKey !== '') {
             $stmt = db()->prepare(
-                'UPDATE ai_models SET name=?, model_id=?, base_url=?, api_key=?, model_type=?, credits=?, invoke_mode=?, supports_edit=?, edit_adapter=?, edit_image_field=?, sort_order=?, is_active=? WHERE id=?'
+                'UPDATE ai_models SET name=?, model_id=?, base_url=?, api_key=?, model_type=?, credits=?, invoke_mode=?, supports_edit=?, edit_adapter=?, edit_image_field=?, supports_reference=?, reference_required=?, max_reference_images=?, video_adapter=?, fixed_seconds=?, video_resolution=?, video_aspect_ratio=?, sort_order=?, is_active=? WHERE id=?'
             );
             $stmt->execute([$name, $modelId, $baseUrl, $apiKey, $modelType, $credits, $invokeMode, $supportsEdit, $editAdapter, $editImageField, $sortOrder, $isActive, $id]);
         } else {
             $stmt = db()->prepare(
-                'UPDATE ai_models SET name=?, model_id=?, base_url=?, model_type=?, credits=?, invoke_mode=?, supports_edit=?, edit_adapter=?, edit_image_field=?, sort_order=?, is_active=? WHERE id=?'
+                'UPDATE ai_models SET name=?, model_id=?, base_url=?, model_type=?, credits=?, invoke_mode=?, supports_edit=?, edit_adapter=?, edit_image_field=?, supports_reference=?, reference_required=?, max_reference_images=?, video_adapter=?, fixed_seconds=?, video_resolution=?, video_aspect_ratio=?, sort_order=?, is_active=? WHERE id=?'
             );
-            $stmt->execute([$name, $modelId, $baseUrl, $modelType, $credits, $invokeMode, $supportsEdit, $editAdapter, $editImageField, $sortOrder, $isActive, $id]);
+            $stmt->execute([$name, $modelId, $baseUrl, $modelType, $credits, $invokeMode, $supportsEdit, $editAdapter, $editImageField, $supportsReference, $referenceRequired, $maxReferenceImages, $videoAdapter, $fixedSeconds, $videoResolution, $videoAspectRatio, $sortOrder, $isActive, $id]);
         }
 
         flash('success', '模型已更新。');
@@ -365,6 +404,56 @@ table[data-admin-models] td:last-child {
                     </select>
                 </label>
             </div>
+            <div class="field-grid" id="videoFieldsSection" style="display:none;">
+                <label class="field">
+                    <span>支持参考图</span>
+                    <select name="supports_reference">
+                        <option value="0">不支持</option>
+                        <option value="1">支持</option>
+                    </select>
+                </label>
+                <label class="field">
+                    <span>参考图必填</span>
+                    <select name="reference_required">
+                        <option value="0">可选</option>
+                        <option value="1">必填</option>
+                    </select>
+                </label>
+                <label class="field">
+                    <span>最大参考图数</span>
+                    <input name="max_reference_images" type="number" min="1" max="16" value="1">
+                </label>
+                <label class="field">
+                    <span>视频适配器</span>
+                    <select name="video_adapter">
+                        <option value="none">默认</option>
+                        <option value="kaiyuncode">kaiyuncode</option>
+                    </select>
+                </label>
+            </div>
+            <div class="field-grid" id="videoTimingSection" style="display:none;">
+                <label class="field">
+                    <span>固定时长(秒)</span>
+                    <input name="fixed_seconds" type="number" min="0" max="60" value="0" placeholder="0=用户自选">
+                </label>
+                <label class="field">
+                    <span>分辨率</span>
+                    <select name="video_resolution">
+                        <option value="auto">自动</option>
+                        <option value="720p">720p</option>
+                        <option value="1080p">1080p</option>
+                    </select>
+                </label>
+                <label class="field">
+                    <span>比例</span>
+                    <select name="video_aspect_ratio">
+                        <option value="auto">自动</option>
+                        <option value="16:9">16:9 横屏</option>
+                        <option value="9:16">9:16 竖屏</option>
+                        <option value="1:1">1:1 方形</option>
+                    </select>
+                </label>
+            </div>
             <button class="button primary" type="submit">添加模型</button>
         </form>
     </section>
@@ -390,6 +479,8 @@ table[data-admin-models] td:last-child {
                         <th>调用</th>
                         <th>编辑</th>
                         <th>适配器</th>
+                        <th>参图</th>
+                        <th>时长</th>
                         <th>点</th>
                         <th>状态</th>
                         <th>操作</th>
@@ -444,6 +535,15 @@ table[data-admin-models] td:last-child {
                                     <select name="edit_adapter" class="compact-input" style="min-width: 140px;">
                                         <?= render_edit_adapter_options((string) ($m['edit_adapter'] ?? 'none')) ?>
                                     </select>
+                                </td>
+                                <td>
+                                    <select name="supports_reference" class="compact-input" style="min-width: 56px;">
+                                        <option value="0" <?= (int) ($m['supports_reference'] ?? 0) === 0 ? 'selected' : '' ?>>否</option>
+                                        <option value="1" <?= (int) ($m['supports_reference'] ?? 0) === 1 ? 'selected' : '' ?>>是</option>
+                                    </select>
+                                </td>
+                                <td>
+                                    <input class="compact-input" name="fixed_seconds" type="number" min="0" max="60" value="<?= (int) ($m['fixed_seconds'] ?? 0) ?>" placeholder="0" style="min-width: 52px;" title="固定时长(秒)，0=用户自选">
                                 </td>
                                 <td>
                                     <input class="compact-input" name="credits" type="number" min="1" value="<?= (int) ($m['credits'] ?? 0) ?: '' ?>" placeholder="默认" style="min-width: 72px;">
@@ -524,9 +624,22 @@ table[data-admin-models] td:last-child {
         }
     };
 
+    const showVideoFields = (modelType) => {
+        const videoSection = document.getElementById('videoFieldsSection');
+        const timingSection = document.getElementById('videoTimingSection');
+        if (!videoSection || !timingSection) return;
+        const isVideo = modelType === 'video';
+        videoSection.style.display = isVideo ? '' : 'none';
+        timingSection.style.display = isVideo ? '' : 'none';
+    };
+
     document.querySelectorAll('[data-model-type-select]').forEach((select) => {
         syncInvokeModeOptions(select);
-        select.addEventListener('change', () => syncInvokeModeOptions(select));
+        showVideoFields(select.value);
+        select.addEventListener('change', () => {
+            syncInvokeModeOptions(select);
+            showVideoFields(select.value);
+        });
     });
 })();
 </script>

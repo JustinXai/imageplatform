@@ -17,6 +17,21 @@ ensure_ai_models_type_column();
 $videoModels = active_video_ai_models();
 $noActiveModel = empty($videoModels);
 
+// 预计算视频模型的 fixed_seconds 配置
+$modelFixedSeconds = [];
+$modelSupportsRef = [];
+$modelRefRequired = [];
+$modelResolutions = [];
+$modelAspectRatios = [];
+foreach ($videoModels as $vm) {
+    $vid = (int) $vm['id'];
+    $modelFixedSeconds[$vid] = max(0, (int) ($vm['fixed_seconds'] ?? 0));
+    $modelSupportsRef[$vid] = (int) ($vm['supports_reference'] ?? 0);
+    $modelRefRequired[$vid] = (int) ($vm['reference_required'] ?? 0);
+    $modelResolutions[$vid] = trim((string) ($vm['video_resolution'] ?? 'auto'));
+    $modelAspectRatios[$vid] = trim((string) ($vm['video_aspect_ratio'] ?? 'auto'));
+}
+
 $stmt = db()->prepare(
     "SELECT id, user_id, status, mode, model, prompt, size, quality, output_format,
             input_images_json,
@@ -101,14 +116,14 @@ render_header('视频生成', 'video');
                             <input type="radio" name="video_mode_switch" value="text" checked>
                             <span>文生视频</span>
                         </label>
-                        <label>
+                        <label data-video-mode-with-image>
                             <input type="radio" name="video_mode_switch" value="image">
                             <span>图生视频</span>
                         </label>
                     </div>
 
                     <div class="field-v3 edit-upload-field hidden" data-video-upload>
-                        <label>参考图片（最多 <?= $maxEditImages ?> 张）</label>
+                        <label>参考图片（最多 <span data-max-ref-count>1</span> 张）</label>
                         <div class="edit-upload-box" data-video-upload-box>
                             <input name="edit_images[]" type="file" accept="image/png,image/jpeg,image/webp" multiple data-max-files="<?= $maxEditImages ?>">
                             <div class="edit-upload-icon" aria-hidden="true">+</div>
@@ -144,16 +159,35 @@ render_header('视频生成', 'video');
                     <div class="field-v3">
                         <label for="ai_model_id">AI 模型</label>
                         <select name="ai_model_id" id="ai_model_id"
-                            data-video-models="<?= e(json_encode(array_map(function ($m) { return ['id' => (int) $m['id'], 'credits' => (int) ($m['credits'] ?? 0)]; }, $videoModels))) ?>"
+                            data-video-models="<?= e(json_encode(array_map(function ($m) use ($modelSupportsRef, $modelRefRequired, $modelFixedSeconds, $modelResolutions, $modelAspectRatios) {
+                                $mid = (int) $m['id'];
+                                return [
+                                    'id' => $mid,
+                                    'credits' => (int) ($m['credits'] ?? 0),
+                                    'supports_reference' => $modelSupportsRef[$mid] ?? 0,
+                                    'reference_required' => $modelRefRequired[$mid] ?? 0,
+                                    'fixed_seconds' => $modelFixedSeconds[$mid] ?? 0,
+                                    'video_resolution' => $modelResolutions[$mid] ?? 'auto',
+                                    'video_aspect_ratio' => $modelAspectRatios[$mid] ?? 'auto',
+                                ];
+                            }, $videoModels))) ?>"
                         >
                             <?php foreach ($videoModels as $m): ?>
-                                <option value="<?= (int) $m['id'] ?>" <?= (int) ($m['credits'] ?? 0) > 0 ? 'data-credits="' . (int) $m['credits'] . '"' : '' ?>><?= e($m['name']) ?></option>
+                                <option value="<?= (int) $m['id'] ?>"
+                                    data-credits="<?= (int) ($m['credits'] ?? 0) ?>"
+                                    data-supports-ref="<?= (int) ($modelSupportsRef[(int) $m['id']] ?? 0) ?>"
+                                    data-ref-required="<?= (int) ($modelRefRequired[(int) $m['id']] ?? 0) ?>"
+                                    data-fixed-seconds="<?= (int) ($modelFixedSeconds[(int) $m['id']] ?? 0) ?>"
+                                    data-video-res="<?= e($modelResolutions[(int) $m['id']] ?? 'auto') ?>"
+                                    data-video-ratio="<?= e($modelAspectRatios[(int) $m['id']] ?? 'auto') ?>"
+                                ><?= e($m['name']) ?></option>
                             <?php endforeach; ?>
                         </select>
                     </div>
                     <?php endif; ?>
                     <div class="cost-hint" data-cost-display data-default-cost="<?= $videoCost ?>">
                         当前消耗：<strong data-cost-value><?= $videoCost ?></strong> <?= e($balanceLabel) ?>/次
+                        <span data-cost-seconds-info style="display:none;margin-left:8px;font-size:12px;color:var(--text-muted);"></span>
                     </div>
                     <button id="generateButton" class="btn btn-primary btn-lg" type="submit" style="width:100%;">生成视频</button>
                 </form>
