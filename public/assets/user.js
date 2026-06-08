@@ -67,6 +67,49 @@ const getSelectedModelMeta = () => {
   };
 };
 
+const ASPECT_LABELS = {
+  'auto': 'Auto', '1:1': '1:1', '3:2': '3:2', '2:3': '2:3',
+  '4:3': '4:3', '3:4': '3:4', '5:4': '5:4', '4:5': '4:5',
+  '16:9': '16:9', '9:16': '9:16', '2:1': '2:1', '1:2': '1:2',
+  '21:9': '21:9', '9:21': '9:21',
+};
+const SIZE_LABELS = {
+  'auto': 'Auto', '1024x1024': '1024×1024', '1536x1024': '1536×1024',
+  '1024x1536': '1024×1536', '2048x2048': '2048×2048',
+};
+
+const updateSizeOptions = () => {
+  const sizeSelect = document.getElementById('image_size');
+  if (!sizeSelect) return;
+  const meta = getSelectedModelMeta();
+  if (!meta) return;
+
+  // Get options from JSON or fallback to data attributes
+  let opts = [];
+  try {
+    const raw = meta.image_size_options;
+    if (Array.isArray(raw) && raw.length > 0) opts = raw;
+  } catch (_) {}
+  if (!opts.length) {
+    try { const a = JSON.parse(sizeSelect.closest('.model-chip').querySelector('option:checked')?.dataset.sizeOptions || '[]'); if (a.length) opts = a; } catch (_) {}
+  }
+
+  // Fallback to all options if nothing configured
+  if (!opts.length) {
+    opts = Object.keys(ASPECT_LABELS);
+  }
+
+  const defaultSize = meta.image_default_size || 'auto';
+  sizeSelect.innerHTML = '';
+  opts.forEach(v => {
+    const opt = document.createElement('option');
+    opt.value = v;
+    opt.textContent = SIZE_LABELS[v] || ASPECT_LABELS[v] || v;
+    if (v === defaultSize) opt.selected = true;
+    sizeSelect.appendChild(opt);
+  });
+};
+
 const createRecordCard = (record) => {
   const article = document.createElement("article");
   article.className = "media-card";
@@ -299,11 +342,12 @@ if (modelSelect) {
     if (costVal) {
       costVal.textContent = credits > 0 ? credits : "1";
     }
+    // Update size options dynamically based on selected model
+    updateSizeOptions();
     // Update edit mode visibility based on model supports_edit
     const selectedMode = document.querySelector('input[name="mode"]:checked')?.value || "draw";
     const editUpload = document.querySelector("[data-edit-upload]");
     if (editUpload && selectedMode === "edit" && !supportsEdit) {
-      // Switch back to draw mode if model doesn't support edit
       const drawRadio = document.querySelector('input[name="mode"][value="draw"]');
       if (drawRadio) drawRadio.checked = true;
       syncModeFields();

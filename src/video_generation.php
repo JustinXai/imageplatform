@@ -31,27 +31,85 @@ function video_allowed_formats(): array
  * @return array
  */
 /**
- * 生成多种视频 API 请求体格式（逐一尝试直到成功）
+ * 生成视频 API 请求体（按 adapter 类型构建）
  *
- * 兼容 prompt 格式（/v1/videos）和 messages 格式（/v1/chat/completions）。
- * 去掉 n 参数（NewAPI 视频接口无此字段）。
+ * newtoken_video_async: 使用 /v1/videos 接口，payload 包含 model/prompt/duration/aspect_ratio/input_mode/reference_images
+ * kaiyuncode/relay: 使用原有多格式探测逻辑
  *
  * @param  array $record 生成记录
- * @return array         每种格式的 payload 数组
+ * @return array         payload 数组
  */
 function video_payload_formats(array $record): array
 {
-    $model  = (string) $record['model'];
-    $prompt = (string) $record['prompt'];
-    $seconds = max(1, min(60, (int) ($record['seconds'] ?? 8)));
+    $model       = (string) ($record['model'] ?? '');
+    $prompt      = (string) ($record['prompt'] ?? '');
+    $adapter     = (string) ($record['video_adapter'] ?? ($record['snapshot_video_adapter'] ?? ''));
+    $duration    = max(1, (int) ($record['seconds'] ?? ($record['video_duration'] ?? 8)));
+    $aspect      = trim((string) ($record['video_aspect'] ?? ($record['size'] ?? '16:9')));
+    $videoSize   = trim((string) ($record['video_size'] ?? 'auto'));
+    $videoMode   = trim((string) ($record['video_mode'] ?? 'text_to_video'));
+    $refUrls     = $record['input_images'] ?? [];
 
+    // Field mappings from record (set in generation_input_from_request)
+    $durationField = trim((string) ($record['video_duration_field'] ?? 'duration'));
+    $aspectField   = trim((string) ($record['video_aspect_field'] ?? 'aspect_ratio'));
+    $sizeField     = trim((string) ($record['video_size_field'] ?? 'size'));
+    $inputModeField = trim((string) ($record['video_input_mode_field'] ?? 'input_mode'));
+    $refField      = trim((string) ($record['video_ref_field'] ?? 'reference_images'));
+
+    // newtoken_video_async: 构建 /v1/videos 接口专用 payload
+    if ($adapter === 'newtoken_video_async') {
+        $payload = [
+            'model' => $model,
+            'prompt' => $prompt,
+        ];
+
+        // Duration field (always use 'duration', never 'seconds')
+        $payload[$durationField] = $duration;
+
+        // Aspect field (only if not 'auto')
+        if ($aspect !== '' && $aspect !== 'auto') {
+            $payload[$aspectField] = $aspect;
+        }
+
+        // Size field (only if not 'auto')
+        if ($videoSize !== '' && $videoSize !== 'auto') {
+            $payload[$sizeField] = $videoSize;
+        }
+
+        // Input mode field
+        if ($inputModeField !== '' && $inputModeField !== 'input_mode') {
+            $payload[$inputModeField] = $videoMode;
+        } else {
+            $payload['input_mode'] = $videoMode;
+        }
+
+        // Reference images field
+        if (!empty($refUrls) && is_array($refUrls)) {
+            $refs = [];
+            foreach ($refUrls as $img) {
+                if (is_string($img)) {
+                    $refs[] = $img;
+                } elseif (is_array($img) && isset($img['url'])) {
+                    $refs[] = $img['url'];
+                }
+            }
+            if (!empty($refs)) {
+                $payload[$refField] = $refs;
+            }
+        }
+
+        return [$payload];
+    }
+
+    // kaiyuncode/relay: 原有多格式探测逻辑
     $formats = [];
 
     // 格式1：messages 格式（适用于 /v1/chat/completions）
     $formats[] = [
         'model'    => $model,
         'messages' => [['role' => 'user', 'content' => $prompt]],
-        'seconds'  => (string) $seconds,
+        'seconds'  => (string) $duration,
     ];
 
     // 格式2：messages 格式无 seconds
@@ -64,7 +122,7 @@ function video_payload_formats(array $record): array
     $formats[] = [
         'model'   => $model,
         'prompt'  => $prompt,
-        'seconds' => (string) $seconds,
+        'seconds' => (string) $duration,
     ];
 
     // 格式4：prompt 格式无 seconds
@@ -74,7 +132,7 @@ function video_payload_formats(array $record): array
     $formats[] = [
         'model'    => $model,
         'prompt'   => $prompt,
-        'duration' => $seconds,
+        'duration' => $duration,
     ];
 
     return $formats;

@@ -7,6 +7,8 @@ require_once __DIR__ . '/../../src/migration.php';
 $admin = require_admin();
 ensure_ai_models_table();
 ensure_ai_models_type_column();
+ensure_ai_models_capability_columns();
+ensure_generation_records_selection_columns();
 
 function normalize_model_type(string $value): string
 {

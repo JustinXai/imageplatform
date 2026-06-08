@@ -123,6 +123,105 @@ if (!$isInstallCheck && !$hasAppConfig && !is_file($installedMarker)) {
 // ===== 鏍稿績鍑芥暟 =====
 
 /**
+ * 确认AI模型能力字段存在（比例/时长/尺导/模式options）
+ */
+function ensure_ai_models_capability_columns(): void
+{
+    static $checked = false;
+    if ($checked) return;
+
+    $columns = [];
+    $stmt = db()->query('SHOW COLUMNS FROM ai_models');
+    foreach ($stmt->fetchAll() as $column) {
+        $columns[(string) $column['Field']] = true;
+    }
+
+    if (empty($columns['image_aspect_options_json'])) {
+        db()->exec("ALTER TABLE ai_models ADD COLUMN image_aspect_options_json LONGTEXT NULL AFTER video_aspect_ratio");
+    }
+    if (empty($columns['image_default_aspect'])) {
+        db()->exec("ALTER TABLE ai_models ADD COLUMN image_default_aspect VARCHAR(20) NOT NULL DEFAULT 'auto' AFTER image_aspect_options_json");
+    }
+    if (empty($columns['image_size_options_json'])) {
+        db()->exec("ALTER TABLE ai_models ADD COLUMN image_size_options_json LONGTEXT NULL AFTER image_default_aspect");
+    }
+    if (empty($columns['image_default_size'])) {
+        db()->exec("ALTER TABLE ai_models ADD COLUMN image_default_size VARCHAR(30) NOT NULL DEFAULT 'auto' AFTER image_size_options_json");
+    }
+    if (empty($columns['video_duration_options_json'])) {
+        db()->exec("ALTER TABLE ai_models ADD COLUMN video_duration_options_json LONGTEXT NULL AFTER image_default_size");
+    }
+    if (empty($columns['video_default_duration'])) {
+        db()->exec("ALTER TABLE ai_models ADD COLUMN video_default_duration INT UNSIGNED DEFAULT NULL AFTER video_duration_options_json");
+    }
+    if (empty($columns['video_aspect_options_json'])) {
+        db()->exec("ALTER TABLE ai_models ADD COLUMN video_aspect_options_json LONGTEXT NULL AFTER video_default_duration");
+    }
+    if (empty($columns['video_default_aspect'])) {
+        db()->exec("ALTER TABLE ai_models ADD COLUMN video_default_aspect VARCHAR(20) NOT NULL DEFAULT '16:9' AFTER video_aspect_options_json");
+    }
+    if (empty($columns['video_size_options_json'])) {
+        db()->exec("ALTER TABLE ai_models ADD COLUMN video_size_options_json LONGTEXT NULL AFTER video_default_aspect");
+    }
+    if (empty($columns['video_default_size'])) {
+        db()->exec("ALTER TABLE ai_models ADD COLUMN video_default_size VARCHAR(30) NOT NULL DEFAULT 'auto' AFTER video_size_options_json");
+    }
+    if (empty($columns['video_mode_options_json'])) {
+        db()->exec("ALTER TABLE ai_models ADD COLUMN video_mode_options_json LONGTEXT NULL AFTER video_default_size");
+    }
+    if (empty($columns['video_default_mode'])) {
+        db()->exec("ALTER TABLE ai_models ADD COLUMN video_default_mode VARCHAR(50) NOT NULL DEFAULT 'text_to_video' AFTER video_mode_options_json");
+    }
+    if (empty($columns['video_reference_field'])) {
+        db()->exec("ALTER TABLE ai_models ADD COLUMN video_reference_field VARCHAR(50) NOT NULL DEFAULT 'reference_images' AFTER video_default_mode");
+    }
+    if (empty($columns['video_duration_field'])) {
+        db()->exec("ALTER TABLE ai_models ADD COLUMN video_duration_field VARCHAR(50) NOT NULL DEFAULT 'duration' AFTER video_reference_field");
+    }
+    if (empty($columns['video_aspect_field'])) {
+        db()->exec("ALTER TABLE ai_models ADD COLUMN video_aspect_field VARCHAR(50) NOT NULL DEFAULT 'aspect_ratio' AFTER video_duration_field");
+    }
+    if (empty($columns['video_size_field'])) {
+        db()->exec("ALTER TABLE ai_models ADD COLUMN video_size_field VARCHAR(50) NOT NULL DEFAULT 'size' AFTER video_aspect_field");
+    }
+    if (empty($columns['video_input_mode_field'])) {
+        db()->exec("ALTER TABLE ai_models ADD COLUMN video_input_mode_field VARCHAR(50) NOT NULL DEFAULT 'input_mode' AFTER video_size_field");
+    }
+
+    $checked = true;
+}
+
+/**
+ * 确认生成记录选择项字段存在（比例/尺导/时长/模式）
+ */
+function ensure_generation_records_selection_columns(): void
+{
+    static $checked = false;
+    if ($checked) return;
+
+    $columns = [];
+    $stmt = db()->query('SHOW COLUMNS FROM generation_records');
+    foreach ($stmt->fetchAll() as $column) {
+        $columns[(string) $column['Field']] = true;
+    }
+
+    if (empty($columns['selected_aspect'])) {
+        db()->exec("ALTER TABLE generation_records ADD COLUMN selected_aspect VARCHAR(20) NULL AFTER output_base64");
+    }
+    if (empty($columns['selected_size'])) {
+        db()->exec("ALTER TABLE generation_records ADD COLUMN selected_size VARCHAR(30) NULL AFTER selected_aspect");
+    }
+    if (empty($columns['selected_duration'])) {
+        db()->exec("ALTER TABLE generation_records ADD COLUMN selected_duration INT UNSIGNED DEFAULT NULL AFTER selected_size");
+    }
+    if (empty($columns['selected_video_mode'])) {
+        db()->exec("ALTER TABLE generation_records ADD COLUMN selected_video_mode VARCHAR(50) NULL AFTER selected_duration");
+    }
+
+    $checked = true;
+}
+
+/**
  * 鑾峰彇閰嶇疆椤癸紙鏀寔鐐瑰彿鍒嗛殧锛? * @param  string $key  
  * @param  mixed $default  
  * @return mixed

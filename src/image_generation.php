@@ -168,78 +168,168 @@ function generation_input_from_request(array $input, array $files): array
         if (!in_array($format, ['mp4', 'webm'], true)) {
             $format = 'mp4';
         }
-        $resolution = normalize_video_resolution((string) ($input['resolution'] ?? 'auto'));
-        if (!video_resolution_is_valid($resolution)) {
-            throw new InvalidArgumentException('Invalid video resolution.');
-        }
-        $videoMode = strtolower(trim((string) ($input['video_mode'] ?? 'text')));
-        if (!in_array($videoMode, ['text', 'image'], true)) {
-            $videoMode = 'text';
-        }
         $modelId = (int) ($input['ai_model_id'] ?? 0);
 
-        // 模型配置快照字段：参考图和时长
+        // Load video model capabilities from DB
         $modelSupportsRef = 0;
         $modelRefRequired = 0;
+        $modelMaxRefImages = 1;
         $modelFixedSeconds = 0;
-        $modelFixedRes = 'auto';
-        $modelFixedRatio = 'auto';
-        $maxRefImages = 1;
+        $modelDurationOptions = [];
+        $modelDefaultDuration = null;
+        $modelAspectOptions = [];
+        $modelDefaultAspect = '16:9';
+        $modelSizeOptions = [];
+        $modelDefaultSize = 'auto';
+        $modelModeOptions = [];
+        $modelDefaultMode = 'text_to_video';
+        $modelRefField = 'reference_images';
+        $modelDurationField = 'duration';
+        $modelAspectField = 'aspect_ratio';
+        $modelSizeField = 'size';
+        $modelInputModeField = 'input_mode';
+        $modelCredits = 0;
 
         if ($modelId > 0) {
-            $stmt = db()->prepare('SELECT supports_reference, reference_required, max_reference_images, fixed_seconds, video_resolution, video_aspect_ratio FROM ai_models WHERE id = ? AND is_active = 1 AND model_type = ? LIMIT 1');
+            $stmt = db()->prepare(
+                'SELECT supports_reference, reference_required, max_reference_images, fixed_seconds, '
+                . 'video_duration_options_json, video_default_duration, '
+                . 'video_aspect_options_json, video_default_aspect, '
+                . 'video_size_options_json, video_default_size, '
+                . 'video_mode_options_json, video_default_mode, '
+                . 'video_reference_field, video_duration_field, video_aspect_field, '
+                . 'video_size_field, video_input_mode_field, credits '
+                . 'FROM ai_models WHERE id = ? AND is_active = 1 AND model_type = ? LIMIT 1'
+            );
             $stmt->execute([$modelId, 'video']);
-            $videoModelRow = $stmt->fetch();
-            if ($videoModelRow) {
-                $modelSupportsRef = (int) ($videoModelRow['supports_reference'] ?? 0);
-                $modelRefRequired = (int) ($videoModelRow['reference_required'] ?? 0);
-                $maxRefImages = max(1, (int) ($videoModelRow['max_reference_images'] ?? 1));
-                $modelFixedSeconds = max(0, (int) ($videoModelRow['fixed_seconds'] ?? 0));
-                $modelFixedRes = trim((string) ($videoModelRow['video_resolution'] ?? 'auto'));
-                $modelFixedRatio = trim((string) ($videoModelRow['video_aspect_ratio'] ?? 'auto'));
-            }
-        }
+            $vm = $stmt->fetch();
+            if ($vm) {
+                $modelSupportsRef = (int) ($vm['supports_reference'] ?? 0);
+                $modelRefRequired = (int) ($vm['reference_required'] ?? 0);
+                $modelMaxRefImages = max(1, (int) ($vm['max_reference_images'] ?? 1));
+                $modelFixedSeconds = max(0, (int) ($vm['fixed_seconds'] ?? 0));
+                $modelCredits = max(0, (int) ($vm['credits'] ?? 0));
 
-        // 模型不支持参考图时，拒绝上传
-        if ($modelSupportsRef === 0 && ($videoMode === 'image' || request_has_uploaded_edit_images($files))) {
-            throw new InvalidArgumentException('当前视频模型不支持参考图片上传。');
-        }
-
-        $inputImages = [];
-        if ($videoMode === 'image' || request_has_uploaded_edit_images($files)) {
-            $inputImages = generation_uploaded_images_from_files($files);
-            if (!$inputImages) {
-                if ($modelRefRequired === 1) {
-                    throw new InvalidArgumentException('当前模型要求必须上传参考图片。');
+                $dOpts = json_decode((string) ($vm['video_duration_options_json'] ?? ''), true);
+                if (is_array($dOpts) && count($dOpts) > 0) {
+                    $modelDurationOptions = array_filter(array_map('intval', $dOpts), fn($v) => $v > 0);
                 }
-                throw new InvalidArgumentException('Image to video mode requires at least one reference image.');
+                $modelDefaultDuration = (int) ($vm['video_default_duration'] ?? 0);
+
+                $aOpts = json_decode((string) ($vm['video_aspect_options_json'] ?? ''), true);
+                if (is_array($aOpts)) {
+                    $modelAspectOptions = array_values(array_filter($aOpts, fn($v) => is_string($v) && $v !== ''));
+                }
+                $modelDefaultAspect = trim((string) ($vm['video_default_aspect'] ?? '16:9'));
+
+                $sOpts = json_decode((string) ($vm['video_size_options_json'] ?? ''), true);
+                if (is_array($sOpts)) {
+                    $modelSizeOptions = array_values(array_filter($sOpts, fn($v) => is_string($v) && $v !== ''));
+                }
+                $modelDefaultSize = trim((string) ($vm['video_default_size'] ?? 'auto'));
+
+                $mOpts = json_decode((string) ($vm['video_mode_options_json'] ?? ''), true);
+                if (is_array($mOpts)) {
+                    $modelModeOptions = array_values(array_filter($mOpts, fn($v) => is_string($v) && $v !== ''));
+                }
+                $modelDefaultMode = trim((string) ($vm['video_default_mode'] ?? 'text_to_video'));
+
+                $modelRefField = trim((string) ($vm['video_reference_field'] ?? 'reference_images'));
+                if ($modelRefField === '') $modelRefField = 'reference_images';
+                $modelDurationField = trim((string) ($vm['video_duration_field'] ?? 'duration'));
+                if ($modelDurationField === '') $modelDurationField = 'duration';
+                $modelAspectField = trim((string) ($vm['video_aspect_field'] ?? 'aspect_ratio'));
+                if ($modelAspectField === '') $modelAspectField = 'aspect_ratio';
+                $modelSizeField = trim((string) ($vm['video_size_field'] ?? 'size'));
+                if ($modelSizeField === '') $modelSizeField = 'size';
+                $modelInputModeField = trim((string) ($vm['video_input_mode_field'] ?? 'input_mode'));
+                if ($modelInputModeField === '') $modelInputModeField = 'input_mode';
             }
-            if (count($inputImages) > $maxRefImages) {
-                throw new InvalidArgumentException('当前模型最多允许 ' . $maxRefImages . ' 张参考图片。');
-            }
-        } elseif ($modelRefRequired === 1) {
-            throw new InvalidArgumentException('当前模型要求必须上传参考图片。');
         }
 
-        // 后台固定配置覆盖前端参数；内测阶段未设置 fixed_seconds 时拒绝提交
-        if ($modelFixedSeconds <= 0) {
-            throw new InvalidArgumentException('当前视频模型尚未完成内测配置，必须设置固定时长后才能提交。');
+        // Read user-submitted values (will be validated against model config)
+        $rawVideoMode = strtolower(trim((string) ($input['video_mode'] ?? $modelDefaultMode)));
+        $effectiveMode = in_array($rawVideoMode, $modelModeOptions, true) ? $rawVideoMode : $modelDefaultMode;
+
+        $rawDuration = (int) ($input['video_duration'] ?? 0);
+        if ($rawDuration <= 0) $rawDuration = $modelDefaultDuration;
+        if (count($modelDurationOptions) > 0 && !in_array($rawDuration, $modelDurationOptions, true)) {
+            $rawDuration = $modelDefaultDuration;
         }
-        $effectiveSeconds = $modelFixedSeconds;
-        $effectiveResolution = $modelFixedRes !== 'auto' ? $modelFixedRes : $resolution;
-        $effectiveSize = $modelFixedRatio !== 'auto' ? $modelFixedRatio : $size;
+        $effectiveDuration = max(1, $rawDuration);
+
+        $rawAspect = trim((string) ($input['video_aspect'] ?? $modelDefaultAspect));
+        if (count($modelAspectOptions) > 0 && !in_array($rawAspect, $modelAspectOptions, true)) {
+            $rawAspect = $modelDefaultAspect;
+        }
+        $effectiveAspect = $rawAspect;
+
+        $rawSize = trim((string) ($input['video_size'] ?? $modelDefaultSize));
+        if (count($modelSizeOptions) > 0 && !in_array($rawSize, $modelSizeOptions, true)) {
+            $rawSize = $modelDefaultSize;
+        }
+        $effectiveSize = $rawSize;
+
+        // Reference image validation based on mode
+        $inputImages = [];
+        $hasUploads = request_has_uploaded_edit_images($files);
+        $requiredImages = 0;
+        if ($effectiveMode === 'first_frame' || $effectiveMode === 'first_last_frame' || $effectiveMode === 'multi_reference') {
+            $requiredImages = $effectiveMode === 'first_last_frame' ? 2 : 1;
+        }
+
+        if ($hasUploads || $effectiveMode !== 'text_to_video') {
+            $inputImages = generation_uploaded_images_from_files($files);
+            $uploadCount = count($inputImages);
+            if ($uploadCount === 0) {
+                if ($requiredImages > 0) {
+                    throw new InvalidArgumentException("当前模式「{$effectiveMode}」至少需要 {$requiredImages} 张参考图片。");
+                }
+            } else {
+                if ($effectiveMode === 'text_to_video' && $uploadCount > 0) {
+                    throw new InvalidArgumentException('文生视频模式不需要参考图片，请切换到参考模式或去掉图片。');
+                }
+                if ($effectiveMode === 'first_frame' && $uploadCount > 1) {
+                    throw new InvalidArgumentException('首帧参考模式最多上传 1 张参考图片。');
+                }
+                if ($effectiveMode === 'first_last_frame' && ($uploadCount < 2 || $uploadCount > 2)) {
+                    throw new InvalidArgumentException('首尾帧模式必须上传恰好 2 张参考图片（首帧 / 尾帧）。');
+                }
+                if ($effectiveMode === 'multi_reference' && $uploadCount > $modelMaxRefImages) {
+                    throw new InvalidArgumentException("当前模型最多允许 {$modelMaxRefImages} 张参考图片。");
+                }
+            }
+        } elseif ($requiredImages > 0) {
+            throw new InvalidArgumentException("当前模式「{$effectiveMode}」至少需要 {$requiredImages} 张参考图片。");
+        }
+
+        // Credits: credits × duration (backend enforced, not from frontend)
+        $effectiveCredits = $modelCredits > 0 ? $modelCredits * $effectiveDuration : 0;
 
         $model = $modelId > 0 ? '' : (string) app_setting('video_model', '');
         return [
-            'mode'        => $mode,
-            'prompt'      => $prompt,
-            'size'        => $effectiveSize,
-            'quality'     => $effectiveResolution,
-            'format'      => $format,
-            'seconds'     => $effectiveSeconds,
-            'model'       => $model,
-            'ai_model_id' => $modelId,
-            'input_images' => $inputImages,
+            'mode'              => $mode,
+            'prompt'           => $prompt,
+            'size'             => $effectiveSize,
+            'quality'          => $effectiveAspect,
+            'format'           => $format,
+            'seconds'          => $effectiveDuration,
+            'model'            => $model,
+            'ai_model_id'      => $modelId,
+            'input_images'     => $inputImages,
+            // New fields
+            'video_mode'       => $effectiveMode,
+            'video_duration'   => $effectiveDuration,
+            'video_aspect'    => $effectiveAspect,
+            'video_size'      => $effectiveSize,
+            'credits_charged'  => $effectiveCredits,
+            // Payload field mappings
+            'video_ref_field'     => $modelRefField,
+            'video_duration_field' => $modelDurationField,
+            'video_aspect_field'  => $modelAspectField,
+            'video_size_field'    => $modelSizeField,
+            'video_input_mode_field' => $modelInputModeField,
+            'video_adapter'       => 'newtoken_video_async', // always set for video mode
         ];
     }
 
@@ -285,15 +375,46 @@ function generation_input_from_request(array $input, array $files): array
         }
     }
 
+    // Validate aspect and size against model config
+    $rawAspect = trim((string) ($input['image_aspect'] ?? 'auto'));
+    $rawSize = trim((string) ($input['image_size'] ?? $size));
+    $aspectOptions = ['auto'];
+    $defaultAspect = 'auto';
+    $sizeOptions = ['auto'];
+    $defaultSize = 'auto';
+    if ($modelId > 0) {
+        $stmt2 = db()->prepare(
+            'SELECT image_aspect_options_json, image_default_aspect, image_size_options_json, image_default_size '
+            . 'FROM ai_models WHERE id = ? AND is_active = 1 LIMIT 1'
+        );
+        $stmt2->execute([$modelId]);
+        $imgModelRow = $stmt2->fetch();
+        if ($imgModelRow) {
+            $aOpts = json_decode((string) ($imgModelRow['image_aspect_options_json'] ?? ''), true);
+            if (is_array($aOpts) && count($aOpts) > 0) {
+                $aspectOptions = array_values(array_filter($aOpts, fn($v) => is_string($v)));
+            }
+            $defaultAspect = trim((string) ($imgModelRow['image_default_aspect'] ?? 'auto'));
+            $sOpts = json_decode((string) ($imgModelRow['image_size_options_json'] ?? ''), true);
+            if (is_array($sOpts) && count($sOpts) > 0) {
+                $sizeOptions = array_values(array_filter($sOpts, fn($v) => is_string($v)));
+            }
+            $defaultSize = trim((string) ($imgModelRow['image_default_size'] ?? 'auto'));
+        }
+    }
+    $effectiveAspect = in_array($rawAspect, $aspectOptions, true) ? $rawAspect : $defaultAspect;
+    $effectiveSize2 = in_array($rawSize, $sizeOptions, true) ? $rawSize : $defaultSize;
+
     return [
         'mode'        => $mode,
         'prompt'      => $prompt,
-        'size'        => $size,
+        'size'        => $effectiveSize2,
         'quality'     => $quality,
         'format'      => $format,
         'model'       => $model,
         'ai_model_id' => $modelId,
         'input_images' => $inputImages,
+        'image_aspect' => $effectiveAspect,
     ];
 }
 
@@ -516,7 +637,11 @@ function create_generation_record(int $userId, array $params, string $status = '
     ensure_generation_records_generation_options();
 
     $modelId = isset($params['ai_model_id']) ? (int) $params['ai_model_id'] : 0;
-    $cost = generation_cost_for((string) $params['mode'], $modelId);
+    $isVideo = (string) ($params['mode'] ?? '') === 'video';
+    // For video: credits may already be computed as credits × duration in generation_input_from_request
+    $cost = isset($params['credits_charged']) && $params['credits_charged'] > 0
+        ? (int) $params['credits_charged']
+        : generation_cost_for((string) $params['mode'], $modelId);
 
     // 构建配置快照（使用创建任务当时的配置，不受后续管理员修改影响）
     $configSnapshot = build_generation_config_snapshot($modelId, (string) $params['mode'], $params);
@@ -537,8 +662,8 @@ function create_generation_record(int $userId, array $params, string $status = '
 
         $stmt = $pdo->prepare(
             'INSERT INTO generation_records
-             (user_id, status, mode, model, ai_model_id, prompt, size, quality, output_format, input_images_json, credits_charged, generation_config_snapshot)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+             (user_id, status, mode, model, ai_model_id, prompt, size, quality, output_format, input_images_json, credits_charged, generation_config_snapshot, selected_aspect, selected_size, selected_duration, selected_video_mode)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $stmt->execute([
             $userId,
@@ -553,6 +678,10 @@ function create_generation_record(int $userId, array $params, string $status = '
             !empty($params['input_images']) ? json_encode($params['input_images'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null,
             $cost,
             $configSnapshot,
+            $isVideo ? ($params['video_aspect'] ?? null) : ($params['image_aspect'] ?? null),
+            $params['size'] ?? null,
+            $isVideo ? ($params['video_duration'] ?? null) : null,
+            $isVideo ? ($params['video_mode'] ?? null) : null,
         ]);
         $recordId = (int) $pdo->lastInsertId();
         $pdo->commit();
@@ -598,10 +727,28 @@ function build_generation_config_snapshot(int $modelId, string $mode, array $par
             $snapshot['supports_reference'] = (int) ($modelConfig['supports_reference'] ?? 0);
             $snapshot['reference_required'] = (int) ($modelConfig['reference_required'] ?? 0);
             $snapshot['max_reference_images'] = max(1, (int) ($modelConfig['max_reference_images'] ?? 1));
-            $snapshot['video_adapter'] = (string) ($modelConfig['video_adapter'] ?? 'none');
+            $snapshot['video_adapter'] = trim((string) ($modelConfig['video_adapter'] ?? 'none')) ?: 'none';
             $snapshot['fixed_seconds'] = max(0, (int) ($modelConfig['fixed_seconds'] ?? 0));
-            $snapshot['video_resolution'] = (string) ($modelConfig['video_resolution'] ?? 'auto');
-            $snapshot['video_aspect_ratio'] = (string) ($modelConfig['video_aspect_ratio'] ?? 'auto');
+            $snapshot['video_resolution'] = trim((string) ($modelConfig['video_resolution'] ?? 'auto'));
+            $snapshot['video_aspect_ratio'] = trim((string) ($modelConfig['video_aspect_ratio'] ?? 'auto'));
+            // New capability fields
+            $snapshot['video_duration_options_json'] = $modelConfig['video_duration_options_json'] ?? null;
+            $snapshot['video_default_duration'] = (int) ($modelConfig['video_default_duration'] ?? 0);
+            $snapshot['video_aspect_options_json'] = $modelConfig['video_aspect_options_json'] ?? null;
+            $snapshot['video_default_aspect'] = trim((string) ($modelConfig['video_default_aspect'] ?? '16:9'));
+            $snapshot['video_size_options_json'] = $modelConfig['video_size_options_json'] ?? null;
+            $snapshot['video_default_size'] = trim((string) ($modelConfig['video_default_size'] ?? 'auto'));
+            $snapshot['video_mode_options_json'] = $modelConfig['video_mode_options_json'] ?? null;
+            $snapshot['video_default_mode'] = trim((string) ($modelConfig['video_default_mode'] ?? 'text_to_video'));
+            $snapshot['video_reference_field'] = trim((string) ($modelConfig['video_reference_field'] ?? 'reference_images'));
+            $snapshot['video_duration_field'] = trim((string) ($modelConfig['video_duration_field'] ?? 'duration'));
+            $snapshot['video_aspect_field'] = trim((string) ($modelConfig['video_aspect_field'] ?? 'aspect_ratio'));
+            $snapshot['video_size_field'] = trim((string) ($modelConfig['video_size_field'] ?? 'size'));
+            $snapshot['video_input_mode_field'] = trim((string) ($modelConfig['video_input_mode_field'] ?? 'input_mode'));
+            $snapshot['image_aspect_options_json'] = $modelConfig['image_aspect_options_json'] ?? null;
+            $snapshot['image_default_aspect'] = trim((string) ($modelConfig['image_default_aspect'] ?? 'auto'));
+            $snapshot['image_size_options_json'] = $modelConfig['image_size_options_json'] ?? null;
+            $snapshot['image_default_size'] = trim((string) ($modelConfig['image_default_size'] ?? 'auto'));
         }
     } else {
         // 使用全局设置
@@ -619,6 +766,24 @@ function build_generation_config_snapshot(int $modelId, string $mode, array $par
         $snapshot['fixed_seconds'] = 0;
         $snapshot['video_resolution'] = 'auto';
         $snapshot['video_aspect_ratio'] = 'auto';
+        // New capability fields (defaults for global settings)
+        $snapshot['video_duration_options_json'] = null;
+        $snapshot['video_default_duration'] = 0;
+        $snapshot['video_aspect_options_json'] = null;
+        $snapshot['video_default_aspect'] = '16:9';
+        $snapshot['video_size_options_json'] = null;
+        $snapshot['video_default_size'] = 'auto';
+        $snapshot['video_mode_options_json'] = null;
+        $snapshot['video_default_mode'] = 'text_to_video';
+        $snapshot['video_reference_field'] = 'reference_images';
+        $snapshot['video_duration_field'] = 'duration';
+        $snapshot['video_aspect_field'] = 'aspect_ratio';
+        $snapshot['video_size_field'] = 'size';
+        $snapshot['video_input_mode_field'] = 'input_mode';
+        $snapshot['image_aspect_options_json'] = null;
+        $snapshot['image_default_aspect'] = 'auto';
+        $snapshot['image_size_options_json'] = null;
+        $snapshot['image_default_size'] = 'auto';
     }
 
     return json_encode($snapshot, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);

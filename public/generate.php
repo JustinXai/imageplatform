@@ -50,6 +50,8 @@ try {
     $user = require_login();
     ensure_generation_records_soft_delete();
     ensure_generation_records_queue_status();
+    ensure_ai_models_capability_columns();
+    ensure_generation_records_selection_columns();
 
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
         json_response(['ok' => false, 'message' => 'Method not allowed'], 405);

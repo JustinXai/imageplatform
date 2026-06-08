@@ -12,6 +12,7 @@ cleanup_stale_running_generation_records();
 
 ensure_ai_models_table();
 ensure_ai_models_type_column();
+ensure_ai_models_capability_columns();
 $aiModels = active_ai_models();
 $hasGlobalImageConfig = trim((string) app_setting('image_base_url', '')) !== '' && trim((string) app_setting('image_api_key', '')) !== '';
 $noActiveModel = empty($aiModels) && !$hasGlobalImageConfig;
@@ -139,9 +140,7 @@ render_header('图片生成器', 'app');
                         <label for="image_size">图片尺寸</label>
                         <div class="model-chip">
                             <select name="size" id="image_size">
-                                <?php foreach ($sizeOptions as $value => $label): ?>
-                                    <option value="<?= e($value) ?>" <?= $value === 'auto' ? 'selected' : '' ?>><?= e($label) ?></option>
-                                <?php endforeach; ?>
+                                <option value="">加载中...</option>
                             </select>
                         </div>
                     </div>
@@ -150,10 +149,33 @@ render_header('图片生成器', 'app');
                         <label for="ai_model">AI 模型</label>
                         <div class="model-chip">
                             <select name="ai_model_id" id="ai_model"
-                                data-image-models="<?= e(json_encode(array_map(function($m) { return ['id' => (int)$m['id'], 'name' => $m['name'], 'credits' => (int)($m['credits'] ?? 0), 'supports_edit' => (int)($m['supports_edit'] ?? 0)]; }, $aiModels))) ?>"
+                                data-image-models="<?= e(json_encode(array_map(function($m) {
+                                    $aOpts = json_decode((string)($m['image_aspect_options_json'] ?? ''), true);
+                                    $sOpts = json_decode((string)($m['image_size_options_json'] ?? ''), true);
+                                    return [
+                                        'id' => (int)$m['id'],
+                                        'name' => $m['name'],
+                                        'credits' => (int)($m['credits'] ?? 0),
+                                        'supports_edit' => (int)($m['supports_edit'] ?? 0),
+                                        'image_aspect_options' => is_array($aOpts) ? array_values($aOpts) : ['auto'],
+                                        'image_default_aspect' => trim((string)($m['image_default_aspect'] ?? 'auto')),
+                                        'image_size_options' => is_array($sOpts) ? array_values($sOpts) : ['auto'],
+                                        'image_default_size' => trim((string)($m['image_default_size'] ?? 'auto')),
+                                    ]; }, $aiModels))) ?>"
                             >
-                                <?php foreach ($aiModels as $m): ?>
-                                    <option value="<?= (int) $m['id'] ?>" data-credits="<?= (int)($m['credits'] ?? 0) ?>" data-supports-edit="<?= (int)($m['supports_edit'] ?? 0) ?>"><?= e($m['name']) ?></option>
+                                <?php foreach ($aiModels as $m):
+                                    $aOpts = json_decode((string)($m['image_aspect_options_json'] ?? ''), true);
+                                    $sOpts = json_decode((string)($m['image_size_options_json'] ?? ''), true);
+                                    $aOpts = is_array($aOpts) ? $aOpts : ['auto'];
+                                    $sOpts = is_array($sOpts) ? $sOpts : ['auto']; ?>
+                                    <option value="<?= (int) $m['id'] ?>"
+                                        data-credits="<?= (int)($m['credits'] ?? 0) ?>"
+                                        data-supports-edit="<?= (int)($m['supports_edit'] ?? 0) ?>"
+                                        data-aspect-options="<?= e(json_encode($aOpts)) ?>"
+                                        data-default-aspect="<?= e(trim((string)($m['image_default_aspect'] ?? 'auto'))) ?>"
+                                        data-size-options="<?= e(json_encode($sOpts)) ?>"
+                                        data-default-size="<?= e(trim((string)($m['image_default_size'] ?? 'auto'))) ?>"
+                                    ><?= e($m['name']) ?></option>
                                 <?php endforeach; ?>
                             </select>
                         </div>
