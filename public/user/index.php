@@ -19,8 +19,8 @@ $noActiveModel = empty($aiModels) && !$hasGlobalImageConfig;
 $stmt = db()->prepare(
     "SELECT id, user_id, status, mode, model, prompt, size, quality, output_format,
             input_images_json,
-            image_url, mime_type, credits_charged, error_message, started_at, finished_at,
-            deleted_at, created_at, image_base64 IS NOT NULL AS has_image_base64
+            output_url, mime_type, credits_cost, error_message, started_at, finished_at,
+            deleted_at, created_at, output_base64 IS NOT NULL AS has_image_base64
      FROM generation_records
      WHERE user_id = ? AND deleted_at IS NULL AND (mode IS NULL OR mode != 'video')
      ORDER BY created_at DESC
@@ -217,7 +217,7 @@ render_header('图片生成器', 'app');
                         <?php $videoSrc = generation_record_video_src($record); ?>
                         <?php $inputImageCount = generation_input_image_count($record); ?>
                         <?php $isVideo = ($record['mode'] ?? 'draw') === 'video'; ?>
-                        <article class="media-card" tabindex="0" data-record-id="<?= (int) $record['id'] ?>" data-status="<?= e($record['status']) ?>" data-mode="<?= e($record['mode'] ?? 'draw') ?>" data-prompt="<?= e($record['prompt']) ?>" data-size="<?= e($record['size']) ?>" data-quality="<?= e($record['quality']) ?>" data-format="<?= e($record['output_format']) ?>" data-credits="<?= (int) $record['credits_charged'] ?>" data-created="<?= e($record['created_at']) ?>" data-finished="<?= e($record['finished_at'] ?: '-') ?>" data-error="<?= e($record['error_message'] ?: '') ?>" data-input-count="<?= $inputImageCount ?>" style="cursor:pointer;">
+                        <article class="media-card" tabindex="0" data-record-id="<?= (int) $record['id'] ?>" data-status="<?= e($record['status']) ?>" data-mode="<?= e($record['mode'] ?? 'draw') ?>" data-prompt="<?= e($record['prompt']) ?>" data-size="<?= e($record['size']) ?>" data-quality="<?= e($record['quality']) ?>" data-format="<?= e($record['output_format']) ?>" data-credits="<?= (int) ($record['credits_cost'] ?? 0) ?>" data-created="<?= e($record['created_at']) ?>" data-finished="<?= e($record['finished_at'] ?: '-') ?>" data-error="<?= e($record['error_message'] ?: '') ?>" data-input-count="<?= $inputImageCount ?>" style="cursor:pointer;">
                             <?php if ($isVideo && $videoSrc): ?>
                                 <video src="<?= e($videoSrc) ?>" controls></video>
                             <?php elseif ($src): ?>

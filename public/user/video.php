@@ -99,7 +99,7 @@ foreach ($videoModels as $vm) {
 $stmt = db()->prepare(
     "SELECT id, user_id, status, mode, model, prompt, size, quality, output_format,
             input_images_json,
-            image_url, mime_type, credits_charged, error_message, started_at, finished_at,
+            output_url, mime_type, credits_cost, error_message, started_at, finished_at,
             deleted_at, created_at,
             video_url, video_base64, video_mime_type
      FROM generation_records
@@ -277,7 +277,7 @@ render_header('视频生成', 'video');
                         data-size="<?= e($record['size']) ?>"
                         data-quality="<?= e($record['quality']) ?>"
                         data-format="<?= e($record['output_format']) ?>"
-                        data-credits="<?= (int) $record['credits_charged'] ?>"
+                        data-credits="<?= (int) ($record['credits_cost'] ?? 0) ?>"
                         data-created="<?= e($record['created_at']) ?>"
                         data-finished="<?= e($record['finished_at'] ?: '-') ?>"
                         data-error="<?= e($record['error_message'] ?: '') ?>"
