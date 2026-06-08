@@ -675,6 +675,63 @@ echo "\n\033[1;33m=== UI FRONT-END RULES TESTS ===\033[0m\n\n";
 }
 
 // ============================================================
+// ADMIN PAGE PARTITION TESTS (live file check)
+// ============================================================
+echo "\n\033[1;33m=== ADMIN PAGE PARTITION TESTS ===\033[0m\n\n";
+
+// T38: Production admin file has three section titles
+{
+    $prodFile = '/srv/nexoapi/public/admin/ai_models.php';
+    $homeFile = '/home/ubuntu/imageplatform/public/admin/ai_models.php';
+    $content = '';
+    if (file_exists($prodFile)) {
+        $content = file_get_contents($prodFile);
+    } elseif (file_exists($homeFile)) {
+        $content = file_get_contents($homeFile);
+    }
+    $hasImageSection = strpos($content, '图片模型') !== false;
+    $hasVideoSection = strpos($content, '视频模型') !== false;
+    $hasChatSection  = strpos($content, 'AI 对话模型') !== false;
+    $hasOtherSection  = strpos($content, '其它模型') !== false || strpos($content, '未分类') !== false;
+    test('T38a: Admin has "图片模型" section', $hasImageSection);
+    test('T38b: Admin has "视频模型" section', $hasVideoSection);
+    test('T38c: Admin has "AI 对话模型" section', $hasChatSection);
+    test('T38d: Admin has "其它/未分类" section', $hasOtherSection);
+}
+
+// T39: No single flat "已配置模型" table covering all models
+{
+    $prodFile = '/srv/nexoapi/public/admin/ai_models.php';
+    $content = file_exists($prodFile) ? file_get_contents($prodFile) : '';
+    // Check that if "已配置模型" exists, it's not a single table mixing all types
+    // A simple proxy: the file should NOT have just one <table> with all models
+    // We check the classify_model function exists (used for partitioning)
+    $hasClassifyFn = strpos($content, 'function classify_model') !== false;
+    test('T39: Admin file uses classify_model() for partitioning', $hasClassifyFn);
+}
+
+// T40: Model 2 (Nano Banana) supports edit
+{
+    $cfg = $configs[2] ?? null;
+    $supportsEdit = (int) ($cfg['supports_edit'] ?? 0);
+    $editAdapter = trim((string) ($cfg['edit_adapter'] ?? ''));
+    test('T40a: Model 2 (Nano Banana) supports_edit = 1', $supportsEdit === 1);
+    test('T40b: Model 2 edit_adapter = newtoken_async_reference', $editAdapter === 'newtoken_async_reference');
+}
+
+// T41: generation_input_from_request now reads from snapshot first for edit mode
+// (Simulated: snapshot has supports_edit=1, edit_adapter=newtoken_async_reference)
+{
+    // This test verifies the fix by checking the file content
+    $prodFile = '/srv/nexoapi/src/image_generation.php';
+    $content = file_exists($prodFile) ? file_get_contents($prodFile) : '';
+    // The fix: generation_input_from_request now reads snapshot's supports_edit
+    $checksSnapshot = strpos($content, "generation_config_snapshot") !== false
+        && strpos($content, 'snapshotSupportsEdit') !== false;
+    test('T41: generation_input_from_request reads snapshot for edit check', $checksSnapshot);
+}
+
+// ============================================================
 // SUMMARY
 // ============================================================
 echo "\n" . str_repeat('=', 52) . "\n";
