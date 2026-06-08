@@ -248,25 +248,30 @@ function generation_input_from_request(array $input, array $files): array
         }
 
         // Read user-submitted values (will be validated against model config)
-        $rawVideoMode = strtolower(trim((string) ($input['video_mode'] ?? $modelDefaultMode)));
-        $effectiveMode = in_array($rawVideoMode, $modelModeOptions, true) ? $rawVideoMode : $modelDefaultMode;
+        $rawVideoMode = strtolower(trim((string) ($input['video_mode'] ?? '')));
+        $userRequestedMode = $rawVideoMode !== '' ? $rawVideoMode : $modelDefaultMode;
+        // Explicitly reject if user requested a mode not in the whitelist
+        if ($rawVideoMode !== '' && count($modelModeOptions) > 0 && !in_array($rawVideoMode, $modelModeOptions, true)) {
+            throw new InvalidArgumentException("生成模式「{$rawVideoMode}」不在当前模型允许的列表中，请重新选择。");
+        }
+        $effectiveMode = in_array($userRequestedMode, $modelModeOptions, true) ? $userRequestedMode : $modelDefaultMode;
 
         $rawDuration = (int) ($input['video_duration'] ?? 0);
         if ($rawDuration <= 0) $rawDuration = $modelDefaultDuration;
         if (count($modelDurationOptions) > 0 && !in_array($rawDuration, $modelDurationOptions, true)) {
-            $rawDuration = $modelDefaultDuration;
+            throw new InvalidArgumentException("视频时长 {$rawDuration} 秒不在允许列表中，请重新选择。");
         }
         $effectiveDuration = max(1, $rawDuration);
 
         $rawAspect = trim((string) ($input['video_aspect'] ?? $modelDefaultAspect));
         if (count($modelAspectOptions) > 0 && !in_array($rawAspect, $modelAspectOptions, true)) {
-            $rawAspect = $modelDefaultAspect;
+            throw new InvalidArgumentException("视频比例「{$rawAspect}」不在允许列表中，请重新选择。");
         }
         $effectiveAspect = $rawAspect;
 
         $rawSize = trim((string) ($input['video_size'] ?? $modelDefaultSize));
         if (count($modelSizeOptions) > 0 && !in_array($rawSize, $modelSizeOptions, true)) {
-            $rawSize = $modelDefaultSize;
+            throw new InvalidArgumentException("视频尺寸「{$rawSize}」不在允许列表中，请重新选择。");
         }
         $effectiveSize = $rawSize;
 
@@ -402,8 +407,29 @@ function generation_input_from_request(array $input, array $files): array
             $defaultSize = trim((string) ($imgModelRow['image_default_size'] ?? 'auto'));
         }
     }
-    $effectiveAspect = in_array($rawAspect, $aspectOptions, true) ? $rawAspect : $defaultAspect;
-    $effectiveSize2 = in_array($rawSize, $sizeOptions, true) ? $rawSize : $defaultSize;
+    // Backend rejects invalid aspect/size before cost deduction.
+    // If model has explicit options, reject anything outside the list.
+    // If model has no options (NULL), use a conservative allowlist to prevent abuse.
+    $ALL_IMAGE_ASPECTS = ['auto','1:1','3:2','2:3','4:3','3:4','5:4','4:5','16:9','9:16','2:1','1:2','21:9','9:21'];
+    $ALL_IMAGE_SIZES = ['auto','1024x1024','1536x1024','1024x1536','2048x2048'];
+    $allowedAspects = count($aspectOptions) > 0 ? $aspectOptions : $ALL_IMAGE_ASPECTS;
+    $allowedSizes = count($sizeOptions) > 0 ? $sizeOptions : $ALL_IMAGE_SIZES;
+
+    if (count($aspectOptions) > 0 && !in_array($rawAspect, $aspectOptions, true)) {
+        throw new InvalidArgumentException("图片比例「{$rawAspect}」不在允许列表中，请重新选择。");
+    }
+    if (count($aspectOptions) === 0 && !in_array($rawAspect, $ALL_IMAGE_ASPECTS, true)) {
+        throw new InvalidArgumentException("图片比例「{$rawAspect}」不是有效值，请重新选择。");
+    }
+    $effectiveAspect = $rawAspect !== '' ? $rawAspect : $defaultAspect;
+
+    if (count($sizeOptions) > 0 && !in_array($rawSize, $sizeOptions, true)) {
+        throw new InvalidArgumentException("图片尺寸「{$rawSize}」不在允许列表中，请重新选择。");
+    }
+    if (count($sizeOptions) === 0 && !in_array($rawSize, $ALL_IMAGE_SIZES, true)) {
+        throw new InvalidArgumentException("图片尺寸「{$rawSize}」不是有效值，请重新选择。");
+    }
+    $effectiveSize2 = $rawSize !== '' ? $rawSize : $defaultSize;
 
     return [
         'mode'        => $mode,
