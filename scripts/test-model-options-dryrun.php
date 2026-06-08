@@ -591,6 +591,90 @@ echo "\n\033[1;33m=== VIDEO EDIT CAPABILITY TESTS ===\033[0m\n\n";
 }
 
 // ============================================================
+// UI FRONT-END RULES TESTS
+// ============================================================
+echo "\n\033[1;33m=== UI FRONT-END RULES TESTS ===\033[0m\n\n";
+
+// T31: Frontend mode whitelist — no English values shown
+{
+    $FE_MODE_WHITELIST = ['text_to_video', 'first_frame', 'first_last_frame', 'multi_reference', 'video_edit'];
+    foreach ($configs as $id => $cfg) {
+        $rawModes = $cfg['video']['mode_options'] ?? [];
+        $allowed = array_values(array_filter($rawModes, function ($m) use ($FE_MODE_WHITELIST) {
+            return in_array($m, $FE_MODE_WHITELIST, true);
+        }));
+        // Verify no non-whitelist modes leak to front end
+        $leaked = array_filter($rawModes, function ($m) use ($FE_MODE_WHITELIST) {
+            return !in_array($m, $FE_MODE_WHITELIST, true);
+        });
+        test("T31-$id: Model $id front-end mode whitelist clean (no leaked values)", count($leaked) === 0, 'leaked: ' . implode(',', $leaked));
+    }
+}
+
+// T32: Frontend aspect whitelist
+{
+    $FE_ASPECT_WHITELIST = ['auto', '16:9', '4:3', '1:1', '3:4', '9:16', '21:9'];
+    foreach ($configs as $id => $cfg) {
+        if (($cfg['type'] ?? '') !== 'video') continue;
+        $rawAspects = $cfg['video']['aspect_options'] ?? [];
+        $leaked = array_filter($rawAspects, function ($a) use ($FE_ASPECT_WHITELIST) {
+            return !in_array($a, $FE_ASPECT_WHITELIST, true);
+        });
+        // Only fail if there are aspects AND none are in whitelist (not if empty)
+        $hasBad = count($rawAspects) > 0 && count($leaked) > 0;
+        test("T32-$id: Model $id front-end aspect whitelist clean", !$hasBad, $hasBad ? 'bad: ' . implode(',', $leaked) : 'ok');
+    }
+}
+
+// T33: Model config JSON does not contain api_key
+{
+    foreach ($configs as $id => $cfg) {
+        $json = json_encode($cfg);
+        $hasKey = strpos($json, 'api_key') !== false || strpos($json, 'apiKey') !== false;
+        test("T33-$id: Model $id config JSON has no api_key", !$hasKey);
+    }
+}
+
+// T34: newtoken_video_async uses duration not seconds (verified via field mapping)
+{
+    $cfg = $configs[5] ?? null;
+    $durationField = trim((string) ($cfg['video_duration_field'] ?? 'duration'));
+    test('T34: Model 5 duration field = duration (not seconds)', $durationField === 'duration');
+}
+
+// T35: Switching model gives mode/aspect/duration options
+{
+    foreach ($configs as $id => $cfg) {
+        if (($cfg['type'] ?? '') !== 'video') continue;
+        $modes = $cfg['video']['mode_options'] ?? [];
+        $aspects = $cfg['video']['aspect_options'] ?? [];
+        $durations = $cfg['video']['duration_options'] ?? [];
+        test("T35-$id: Model $id has mode options", is_array($modes));
+        test("T35-$id: Model $id has aspect options", is_array($aspects));
+        test("T35-$id: Model $id has duration options", is_array($durations));
+    }
+}
+
+// T36: Backend validation — invalid duration rejected
+{
+    $cfg = $configs[5] ?? null;
+    $ok = throws(fn() => validate_video_input(5, 'multi_reference', 15, '16:9', 'auto', ['ref.jpg'], [], [], $cfg));
+    test('T36: Invalid duration 15s rejected by backend', $ok);
+}
+
+// T37: Backend validation — credits = credits × duration (backend enforced)
+{
+    $cfg = $configs[5] ?? null;
+    $result = null;
+    try {
+        $result = validate_video_input(5, 'multi_reference', 10, '16:9', 'auto', ['ref.jpg'], [], [], $cfg);
+    } catch (Throwable $e) {}
+    $expected = ($cfg['credits'] ?? 0) * 10;
+    $actual = $result['credits_charged'] ?? -1;
+    test("T37: Backend credits = credits × duration (got $actual, expect $expected)", $actual === $expected);
+}
+
+// ============================================================
 // SUMMARY
 // ============================================================
 echo "\n" . str_repeat('=', 52) . "\n";

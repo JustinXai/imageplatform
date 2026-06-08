@@ -160,8 +160,6 @@ render_header('视频生成', 'video');
                 <form id="videoGenerateForm" class="form">
                     <?= csrf_field() ?>
                     <input type="hidden" name="mode" value="video">
-                    <input type="hidden" name="video_mode" id="video_mode_field" value="">
-                    <input type="hidden" name="video_duration" id="video_duration_field" value="">
 
                     <?php if (!empty($videoModels)): ?>
                     <div class="field-v3">
@@ -181,8 +179,8 @@ render_header('视频生成', 'video');
                     </div>
 
                     <div class="field-v3" id="videoModeField">
-                        <label>生成模式</label>
-                        <div class="mode-toggle" role="group" id="modeToggleContainer"></div>
+                        <label for="video_mode_select">生成模式</label>
+                        <select name="video_mode" id="video_mode_select"></select>
                     </div>
 
                     <div class="field-v3 edit-upload-field hidden" id="refUploadField">
@@ -233,15 +231,11 @@ render_header('视频生成', 'video');
                     <div id="videoOptionsContainer">
                         <div class="field-v3" id="durationField" style="display:none;">
                             <label for="video_duration_select">视频时长</label>
-                            <select name="video_duration_select" id="video_duration_select"></select>
+                            <select name="video_duration" id="video_duration_select"></select>
                         </div>
                         <div class="field-v3" id="aspectField">
-                            <label for="video_aspect">视频比例</label>
-                            <select name="video_aspect" id="video_aspect"></select>
-                        </div>
-                        <div class="field-v3" id="sizeField">
-                            <label for="video_size">视频尺寸</label>
-                            <select name="video_size" id="video_size"></select>
+                            <label for="video_aspect_select">尺寸</label>
+                            <select name="video_aspect" id="video_aspect_select"></select>
                         </div>
                     </div>
 
@@ -330,9 +324,10 @@ window.__videoModelConfig = <?= $modelConfigJsonStr ?>;
 window.__videoModelIds = <?= $videoModelIdsJson ?>;
 window.__videoModeLabels = {
     'text_to_video': '文生视频',
-    'first_frame': '首帧参考',
+    'first_frame': '首帧',
     'first_last_frame': '首尾帧',
-    'multi_reference': '多帧参考'
+    'multi_reference': '多帧参考',
+    'video_edit': '视频编辑'
 };
 </script>
 <script src="/assets/video.js?v=<?= e((string) (@filemtime(__DIR__ . '/../assets/video.js') ?: time())) ?>"></script>

@@ -1,39 +1,54 @@
-// Dynamic video generation page - model-aware options with video/audio reference support
+// Simplified video generation page — clean mode/size/duration controls
 (function () {
     var modelConfig = window.__videoModelConfig || {};
     var modeLabels = window.__videoModeLabels || {};
 
-    var modelSelect = document.getElementById('ai_model_id');
-    var modeContainer = document.getElementById('modeToggleContainer');
-    var refUploadField = document.getElementById('refUploadField');
-    var refImageInput = document.getElementById('refImageInput');
-    var videoUploadField = document.getElementById('videoUploadField');
-    var videoInput = document.getElementById('refVideoInput');
-    var audioUploadField = document.getElementById('audioUploadField');
-    var audioInput = document.getElementById('refAudioInput');
+    var modelSelect    = document.getElementById('ai_model_id');
+    var modeSelect     = document.getElementById('video_mode_select');
     var durationSelect = document.getElementById('video_duration_select');
-    var aspectSelect = document.getElementById('video_aspect');
-    var sizeSelect = document.getElementById('video_size');
-    var durationField = document.getElementById('durationField');
-    var sizeField = document.getElementById('sizeField');
-    var costValue = document.getElementById('costValue');
-    var costSecondsInfo = document.getElementById('costSecondsInfo');
-    var videoModeField = document.getElementById('video_mode_field');
-    var videoDurationField = document.getElementById('video_duration_field');
-    var maxRefCountSpan = document.querySelector('[data-max-ref-count]');
-    var maxVideoCountSpan = document.querySelector('[data-max-video-count]');
-    var maxAudioCountSpan = document.querySelector('[data-max-audio-count]');
-    var uploadHint = document.querySelector('[data-video-upload-hint]');
-    var form = document.getElementById('videoGenerateForm');
+    var aspectSelect   = document.getElementById('video_aspect_select');
+    var refUploadField = document.getElementById('refUploadField');
+    var videoUploadField = document.getElementById('videoUploadField');
+    var audioUploadField = document.getElementById('audioUploadField');
+    var refImageInput  = document.getElementById('refImageInput');
+    var videoInput     = document.getElementById('refVideoInput');
+    var audioInput     = document.getElementById('refAudioInput');
+    var maxRefCountSpan    = document.querySelector('[data-max-ref-count]');
+    var maxVideoCountSpan  = document.querySelector('[data-max-video-count]');
+    var maxAudioCountSpan  = document.querySelector('[data-max-audio-count]');
+    var uploadHint         = document.querySelector('[data-video-upload-hint]');
+    var costValue          = document.getElementById('costValue');
+    var costSecondsInfo     = document.getElementById('costSecondsInfo');
+    var form               = document.getElementById('videoGenerateForm');
 
     var selectedImages = [];
     var selectedVideos = [];
     var selectedAudios = [];
 
+    // ============================================================
+    // HELPERS
+    // ============================================================
+
     function getCfg() {
         var id = modelSelect ? parseInt(modelSelect.value, 10) : 0;
         return modelConfig[id] || {};
     }
+
+    // Fixed whitelist for front-end display only
+    var ASPECT_WHITELIST = ['auto', '16:9', '4:3', '1:1', '3:4', '9:16', '21:9'];
+    var ASPECT_LABELS = {
+        'auto': '自动',
+        '16:9': '16:9',
+        '4:3':  '4:3',
+        '1:1':  '1:1',
+        '3:4':  '3:4',
+        '9:16': '9:16',
+        '21:9': '21:9'
+    };
+
+    // Fixed whitelist for front-end mode display (Chinese business labels only)
+    var MODE_WHITELIST = ['text_to_video', 'first_frame', 'first_last_frame', 'multi_reference', 'video_edit'];
+    var MODE_ORDER = ['text_to_video', 'first_frame', 'first_last_frame', 'multi_reference', 'video_edit'];
 
     function escHtml(v) {
         return String(v || '').replace(/[&<>"']/g, function (c) {
@@ -41,130 +56,146 @@
         });
     }
 
+    // ============================================================
+    // RENDER MODE OPTIONS (Chinese labels only)
+    // ============================================================
+
     function renderModeOptions(cfg) {
-        if (!modeContainer) return;
-        var modes = cfg.mode_options || ['text_to_video'];
+        if (!modeSelect) return;
+        var rawModes = cfg.mode_options || [];
+        // Intersect with whitelist
+        var allowed = rawModes.filter(function (m) { return MODE_WHITELIST.indexOf(m) !== -1; });
+        // Sort by fixed order
+        allowed.sort(function (a, b) {
+            return MODE_ORDER.indexOf(a) - MODE_ORDER.indexOf(b);
+        });
+
+        modeSelect.innerHTML = '';
+
+        // Default priority: multi_reference > first_frame > video_default_mode
+        var defaults = ['multi_reference', 'first_frame'];
         var defaultMode = cfg.default_mode || 'text_to_video';
-        modeContainer.innerHTML = '';
-        modes.forEach(function (mode) {
-            var label = modeLabels[mode] || mode;
-            var div = document.createElement('label');
-            div.innerHTML = '<input type="radio" name="video_mode_switch" value="' + escHtml(mode) + '"><span>' + escHtml(label) + '</span>';
-            modeContainer.appendChild(div);
-        });
-        // Select default
-        var radios = modeContainer.querySelectorAll('input[name="video_mode_switch"]');
-        radios.forEach(function (r) {
-            if (r.value === defaultMode) r.checked = true;
-        });
-        if (radios.length > 0 && !modeContainer.querySelector('input[name="video_mode_switch"]:checked')) {
-            radios[0].checked = true;
+        for (var i = 0; i < defaults.length; i++) {
+            if (allowed.indexOf(defaults[i]) !== -1) {
+                defaultMode = defaults[i];
+                break;
+            }
         }
-        modeContainer.querySelectorAll('input[name="video_mode_switch"]').forEach(function (inp) {
-            inp.addEventListener('change', onModelOrModeChange);
+        if (allowed.indexOf(defaultMode) === -1 && allowed.length > 0) {
+            defaultMode = allowed[0];
+        }
+
+        allowed.forEach(function (mode) {
+            var opt = document.createElement('option');
+            opt.value = mode;
+            opt.textContent = modeLabels[mode] || mode;
+            if (mode === defaultMode) opt.selected = true;
+            modeSelect.appendChild(opt);
         });
+
+        if (allowed.length === 0) {
+            var opt = document.createElement('option');
+            opt.value = 'text_to_video';
+            opt.textContent = '文生视频';
+            opt.selected = true;
+            modeSelect.appendChild(opt);
+        }
     }
+
+    // ============================================================
+    // RENDER DURATION OPTIONS
+    // ============================================================
 
     function renderDurationOptions(cfg) {
         if (!durationSelect) return;
         var durs = cfg.duration_options || [];
         durationSelect.innerHTML = '';
-        if (durs.length <= 1) {
-            if (durationField) durationField.style.display = 'none';
-        } else {
-            if (durationField) durationField.style.display = '';
-            durs.forEach(function (d) {
-                var opt = document.createElement('option');
-                opt.value = d;
-                opt.textContent = d + '秒';
-                durationSelect.appendChild(opt);
-            });
-        }
+        var defaultDur = cfg.default_duration || 0;
+
+        durs.forEach(function (d) {
+            var opt = document.createElement('option');
+            opt.value = d;
+            opt.textContent = d + 's';
+            if (d === defaultDur) opt.selected = true;
+            durationSelect.appendChild(opt);
+        });
+
+        // Always show duration select (even if 1 option)
+        var field = document.getElementById('durationField');
+        if (field) field.style.display = durs.length > 0 ? '' : 'none';
     }
+
+    // ============================================================
+    // RENDER ASPECT (SIZE) OPTIONS — simplified ratio-only display
+    // ============================================================
 
     function renderAspectOptions(cfg) {
         if (!aspectSelect) return;
-        var aspects = cfg.aspect_options || ['16:9'];
+        var rawAspects = cfg.aspect_options || ['16:9'];
         var defaultAsp = cfg.default_aspect || '16:9';
+
+        // Intersect with whitelist
+        var allowed = rawAspects.filter(function (a) { return ASPECT_WHITELIST.indexOf(a) !== -1; });
+        if (allowed.length === 0) allowed = ['16:9'];
+
+        // Sort by fixed order
+        allowed.sort(function (a, b) {
+            return ASPECT_WHITELIST.indexOf(a) - ASPECT_WHITELIST.indexOf(b);
+        });
+
         aspectSelect.innerHTML = '';
-        var labels = {
-            '16:9': '16:9 横屏', '9:16': '9:16 竖屏', '1:1': '1:1 方形',
-            '4:3': '4:3 标准横屏', '3:4': '3:4 标准竖屏',
-            '21:9': '21:9 电影宽屏', '9:21': '9:21 超长竖屏', 'auto': '自动'
-        };
-        aspects.forEach(function (a) {
+        allowed.forEach(function (a) {
             var opt = document.createElement('option');
             opt.value = a;
-            opt.textContent = labels[a] || a;
+            opt.textContent = ASPECT_LABELS[a] || a;
             if (a === defaultAsp) opt.selected = true;
             aspectSelect.appendChild(opt);
         });
+
+        // Hide size field — we only show aspect
+        var field = document.getElementById('sizeField');
+        if (field) field.style.display = 'none';
     }
 
-    function renderSizeOptions(cfg) {
-        if (!sizeSelect) return;
-        var sizes = cfg.size_options || ['auto'];
-        var defaultSz = cfg.default_size || 'auto';
-        sizeSelect.innerHTML = '';
-        if (sizes.length <= 1 && (sizes.length === 0 || sizes[0] === 'auto')) {
-            if (sizeField) sizeField.style.display = 'none';
-        } else {
-            if (sizeField) sizeField.style.display = '';
-            sizes.forEach(function (s) {
-                var opt = document.createElement('option');
-                opt.value = s;
-                opt.textContent = s === 'auto' ? '自动' : s;
-                if (s === defaultSz) opt.selected = true;
-                sizeSelect.appendChild(opt);
-            });
-        }
-    }
-
-    function getCurrentMode() {
-        var checked = document.querySelector('input[name="video_mode_switch"]:checked');
-        return checked ? checked.value : 'text_to_video';
-    }
+    // ============================================================
+    // UPLOAD VISIBILITY BY MODE
+    // ============================================================
 
     function updateUploadVisibility(cfg) {
         var mode = getCurrentMode();
-        var maxImg = cfg.max_ref_images || 1;
+        var maxImg = cfg.max_ref_images || 0;
         var maxVid = cfg.max_ref_videos || 0;
         var maxAud = cfg.max_ref_audios || 0;
 
-        // Image upload: first_frame, first_last_frame, multi_reference, video_edit, video_reference
-        var needsImages = ['first_frame', 'first_last_frame', 'multi_reference', 'video_edit', 'video_reference'].indexOf(mode) !== -1;
+        // Image upload
+        var needsImages = ['first_frame', 'first_last_frame', 'multi_reference'].indexOf(mode) !== -1;
         if (refUploadField) refUploadField.classList.toggle('hidden', !needsImages);
-        if (maxRefCountSpan) maxRefCountSpan.textContent = maxImg;
-        if (refImageInput) refImageInput.dataset.maxFiles = maxImg;
-
-        // Video upload: video_edit, video_reference
-        var needsVideo = ['video_edit', 'video_reference'].indexOf(mode) !== -1 && maxVid > 0;
-        if (videoUploadField) {
-            videoUploadField.classList.toggle('hidden', !needsVideo);
-            if (needsVideo && maxVideoCountSpan) maxVideoCountSpan.textContent = maxVid;
-            if (videoInput) videoInput.dataset.maxFiles = maxVid;
+        if (needsImages) {
+            var imgCount = mode === 'first_frame' ? 1 : (mode === 'first_last_frame' ? 2 : maxImg);
+            if (maxRefCountSpan) maxRefCountSpan.textContent = imgCount;
+            if (refImageInput) refImageInput.dataset.maxFiles = imgCount;
         }
 
-        // Audio upload: audio_reference
-        var needsAudio = mode === 'audio_reference' && maxAud > 0;
-        if (audioUploadField) {
-            audioUploadField.classList.toggle('hidden', !needsAudio);
-            if (needsAudio && maxAudioCountSpan) maxAudioCountSpan.textContent = maxAud;
-            if (audioInput) audioInput.dataset.maxFiles = maxAud;
-        }
+        // Video upload
+        var needsVideo = (mode === 'video_edit') && maxVid > 0;
+        if (videoUploadField) videoUploadField.classList.toggle('hidden', !needsVideo);
+        if (needsVideo && maxVideoCountSpan) maxVideoCountSpan.textContent = maxVid;
+        if (videoInput) videoInput.dataset.maxFiles = maxVid;
 
-        // Upload hint
+        // Audio upload
+        var needsAudio = (mode === 'audio_reference') && maxAud > 0;
+        if (audioUploadField) audioUploadField.classList.toggle('hidden', !needsAudio);
+        if (needsAudio && maxAudioCountSpan) maxAudioCountSpan.textContent = maxAud;
+        if (audioInput) audioInput.dataset.maxFiles = maxAud;
+
+        // Hint text
         if (uploadHint) {
             var hintText = '支持 PNG / JPG / WEBP';
             if (mode === 'first_last_frame') {
-                hintText = selectedImages.length > 0
-                    ? '已选 ' + selectedImages.length + ' / 2 张（首帧 / 尾帧）'
-                    : '首帧参考 / 尾帧参考，请上传 2 张图片';
+                hintText = '已选 ' + selectedImages.length + ' / 2（首帧 / 尾帧）';
             } else if (mode === 'first_frame') {
-                hintText = selectedImages.length > 0
-                    ? '已选 ' + selectedImages.length + ' / 1 张'
-                    : '首帧参考，请上传 1 张图片';
-            } else if (mode === 'video_edit' || mode === 'video_reference') {
+                hintText = '已选 ' + selectedImages.length + ' / 1 张';
+            } else if (mode === 'video_edit') {
                 hintText = '参考视频编辑，请上传视频文件';
             } else if (mode === 'audio_reference') {
                 hintText = '音频参考，请上传音频文件';
@@ -173,82 +204,69 @@
         }
     }
 
+    // ============================================================
+    // COST DISPLAY — credits × duration
+    // ============================================================
+
     function updateCost() {
         var cfg = getCfg();
         var credits = cfg.credits || 0;
-        var duration = durationSelect && durationSelect.value ? parseInt(durationSelect.value, 10) : (cfg.default_duration || 1);
+        var duration = durationSelect && durationSelect.value
+            ? parseInt(durationSelect.value, 10)
+            : (cfg.default_duration || 1);
         var cost = credits * duration;
         if (costValue) costValue.textContent = cost;
         if (costSecondsInfo) {
-            costSecondsInfo.textContent = duration > 1 ? '(' + credits + '点/秒 × ' + duration + '秒)' : '';
+            costSecondsInfo.textContent = duration > 1
+                ? '(' + credits + '点/秒 × ' + duration + '秒)'
+                : '';
             costSecondsInfo.style.display = duration > 1 ? 'inline' : 'none';
         }
     }
 
-    function syncHidden() {
-        var checked = document.querySelector('input[name="video_mode_switch"]:checked');
-        if (videoModeField && checked) videoModeField.value = checked.value;
-        if (videoDurationField && durationSelect) videoDurationField.value = durationSelect.value;
+    // ============================================================
+    // MODE GETTER
+    // ============================================================
+
+    function getCurrentMode() {
+        return modeSelect ? (modeSelect.value || 'text_to_video') : 'text_to_video';
     }
 
-    function onModelOrModeChange() {
+    // ============================================================
+    // REFRESH ALL ON MODEL/MODE CHANGE
+    // ============================================================
+
+    function refreshAll() {
         var cfg = getCfg();
         renderModeOptions(cfg);
         renderDurationOptions(cfg);
         renderAspectOptions(cfg);
-        renderSizeOptions(cfg);
         updateUploadVisibility(cfg);
         updateCost();
-        syncHidden();
     }
 
-    // Image input
-    if (refImageInput) {
-        refImageInput.addEventListener('change', function (e) {
-            var cfg = getCfg();
-            var maxRef = cfg.max_ref_images || 1;
-            var files = Array.prototype.slice.call(e.target.files || []);
-            selectedImages = selectedImages.concat(files).slice(0, maxRef);
-            renderImagePreview(maxRef);
-            updateUploadVisibility(cfg);
-            e.target.value = '';
-        });
+    function onModelChange() {
+        refreshAll();
     }
 
-    // Video input
-    if (videoInput) {
-        videoInput.addEventListener('change', function (e) {
-            var cfg = getCfg();
-            var maxVid = cfg.max_ref_videos || 1;
-            var files = Array.prototype.slice.call(e.target.files || []);
-            selectedVideos = selectedVideos.concat(files).slice(0, maxVid);
-            renderVideoPreview(maxVid);
-            updateUploadVisibility(cfg);
-            e.target.value = '';
-        });
+    function onDurationChange() {
+        updateCost();
     }
 
-    // Audio input
-    if (audioInput) {
-        audioInput.addEventListener('change', function (e) {
-            var cfg = getCfg();
-            var maxAud = cfg.max_ref_audios || 1;
-            var files = Array.prototype.slice.call(e.target.files || []);
-            selectedAudios = selectedAudios.concat(files).slice(0, maxAud);
-            renderAudioPreview(maxAud);
-            updateUploadVisibility(cfg);
-            e.target.value = '';
-        });
-    }
+    // ============================================================
+    // IMAGE FILE HANDLING
+    // ============================================================
 
-    function renderImagePreview(maxRef) {
+    function renderImagePreview() {
         var preview = document.getElementById('refPreview');
         if (!preview) return;
         preview.innerHTML = '';
-        selectedImages.slice(0, maxRef).forEach(function (file, idx) {
+        var mode = getCurrentMode();
+        var maxImg = mode === 'first_frame' ? 1 : (mode === 'first_last_frame' ? 2 : (getCfg().max_ref_images || 0));
+        selectedImages.slice(0, maxImg).forEach(function (file, idx) {
             var item = document.createElement('div');
             item.className = 'edit-preview-item';
-            if (file.type.startsWith('image/')) {
+            if (file.type && file.type.startsWith('image/')) {
                 var img = document.createElement('img');
                 img.src = URL.createObjectURL(file);
                 img.alt = '参考图 ' + (idx + 1);
@@ -262,67 +280,9 @@
             btn.addEventListener('click', function () {
                 selectedImages.splice(idx, 1);
                 syncImageFiles();
-                renderImagePreview(maxRef);
+                renderImagePreview();
                 updateUploadVisibility(getCfg());
             });
-            item.appendChild(btn);
-            preview.appendChild(item);
-        });
-    }
-
-    function renderVideoPreview(maxRef) {
-        var preview = document.getElementById('videoPreview');
-        if (!preview) return;
-        preview.innerHTML = '';
-        selectedVideos.slice(0, maxRef).forEach(function (file, idx) {
-            var item = document.createElement('div');
-            item.className = 'edit-preview-item';
-            item.style.alignItems = 'center';
-            item.style.display = 'flex';
-            item.style.gap = '8px';
-            var label = document.createElement('span');
-            label.textContent = '📹 ' + file.name;
-            label.style.fontSize = '12px';
-            var btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'edit-preview-remove';
-            btn.textContent = '删除';
-            btn.addEventListener('click', function () {
-                selectedVideos.splice(idx, 1);
-                syncVideoFiles();
-                renderVideoPreview(maxRef);
-                updateUploadVisibility(getCfg());
-            });
-            item.appendChild(label);
-            item.appendChild(btn);
-            preview.appendChild(item);
-        });
-    }
-
-    function renderAudioPreview(maxRef) {
-        var preview = document.getElementById('audioPreview');
-        if (!preview) return;
-        preview.innerHTML = '';
-        selectedAudios.slice(0, maxRef).forEach(function (file, idx) {
-            var item = document.createElement('div');
-            item.className = 'edit-preview-item';
-            item.style.alignItems = 'center';
-            item.style.display = 'flex';
-            item.style.gap = '8px';
-            var label = document.createElement('span');
-            label.textContent = '🎵 ' + file.name;
-            label.style.fontSize = '12px';
-            var btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'edit-preview-remove';
-            btn.textContent = '删除';
-            btn.addEventListener('click', function () {
-                selectedAudios.splice(idx, 1);
-                syncAudioFiles();
-                renderAudioPreview(maxRef);
-                updateUploadVisibility(getCfg());
-            });
-            item.appendChild(label);
             item.appendChild(btn);
             preview.appendChild(item);
         });
@@ -335,11 +295,104 @@
         refImageInput.files = dt.files;
     }
 
+    if (refImageInput) {
+        refImageInput.addEventListener('change', function (e) {
+            var cfg = getCfg();
+            var mode = getCurrentMode();
+            var maxImg = mode === 'first_frame' ? 1 : (mode === 'first_last_frame' ? 2 : (cfg.max_ref_images || 0));
+            var files = Array.prototype.slice.call(e.target.files || []);
+            selectedImages = selectedImages.concat(files).slice(0, maxImg);
+            renderImagePreview();
+            updateUploadVisibility(cfg);
+            e.target.value = '';
+        });
+    }
+
+    // ============================================================
+    // VIDEO FILE HANDLING
+    // ============================================================
+
+    function renderVideoPreview() {
+        var preview = document.getElementById('videoPreview');
+        if (!preview) return;
+        preview.innerHTML = '';
+        var maxVid = getCfg().max_ref_videos || 0;
+        selectedVideos.slice(0, maxVid).forEach(function (file, idx) {
+            var item = document.createElement('div');
+            item.className = 'edit-preview-item';
+            item.style.alignItems = 'center';
+            item.style.display = 'flex';
+            item.style.gap = '8px';
+            var label = document.createElement('span');
+            label.textContent = file.name;
+            label.style.fontSize = '12px';
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'edit-preview-remove';
+            btn.textContent = '删除';
+            btn.addEventListener('click', function () {
+                selectedVideos.splice(idx, 1);
+                syncVideoFiles();
+                renderVideoPreview();
+                updateUploadVisibility(getCfg());
+            });
+            item.appendChild(label);
+            item.appendChild(btn);
+            preview.appendChild(item);
+        });
+    }
+
     function syncVideoFiles() {
         if (!videoInput) return;
         var dt = new DataTransfer();
         selectedVideos.forEach(function (f) { dt.items.add(f); });
         videoInput.files = dt.files;
+    }
+
+    if (videoInput) {
+        videoInput.addEventListener('change', function (e) {
+            var cfg = getCfg();
+            var maxVid = cfg.max_ref_videos || 1;
+            var files = Array.prototype.slice.call(e.target.files || []);
+            selectedVideos = selectedVideos.concat(files).slice(0, maxVid);
+            renderVideoPreview();
+            updateUploadVisibility(cfg);
+            e.target.value = '';
+        });
+    }
+
+    // ============================================================
+    // AUDIO FILE HANDLING
+    // ============================================================
+
+    function renderAudioPreview() {
+        var preview = document.getElementById('audioPreview');
+        if (!preview) return;
+        preview.innerHTML = '';
+        var maxAud = getCfg().max_ref_audios || 0;
+        selectedAudios.slice(0, maxAud).forEach(function (file, idx) {
+            var item = document.createElement('div');
+            item.className = 'edit-preview-item';
+            item.style.alignItems = 'center';
+            item.style.display = 'flex';
+            item.style.gap = '8px';
+            var label = document.createElement('span');
+            label.textContent = file.name;
+            label.style.fontSize = '12px';
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'edit-preview-remove';
+            btn.textContent = '删除';
+            btn.addEventListener('click', function () {
+                selectedAudios.splice(idx, 1);
+                syncAudioFiles();
+                renderAudioPreview();
+                updateUploadVisibility(getCfg());
+            });
+            item.appendChild(label);
+            item.appendChild(btn);
+            preview.appendChild(item);
+        });
     }
 
     function syncAudioFiles() {
@@ -349,25 +402,41 @@
         audioInput.files = dt.files;
     }
 
-    // Init
-    if (modelSelect) {
-        modelSelect.addEventListener('change', onModelOrModeChange);
-    }
-    if (durationSelect) {
-        durationSelect.addEventListener('change', function () { updateCost(); syncHidden(); });
+    if (audioInput) {
+        audioInput.addEventListener('change', function (e) {
+            var cfg = getCfg();
+            var maxAud = cfg.max_ref_audios || 1;
+            var files = Array.prototype.slice.call(e.target.files || []);
+            selectedAudios = selectedAudios.concat(files).slice(0, maxAud);
+            renderAudioPreview();
+            updateUploadVisibility(cfg);
+            e.target.value = '';
+        });
     }
 
-    // Form submit hook
+    // ============================================================
+    // INIT EVENT LISTENERS
+    // ============================================================
+
+    if (modelSelect) modelSelect.addEventListener('change', onModelChange);
+    if (durationSelect) durationSelect.addEventListener('change', onDurationChange);
+
+    // ============================================================
+    // FORM SUBMIT — sync all files
+    // ============================================================
+
     if (form) {
         form.addEventListener('submit', function () {
-            syncHidden();
             syncImageFiles();
             syncVideoFiles();
             syncAudioFiles();
         });
     }
 
-    // Expose for external use
+    // ============================================================
+    // PUBLIC HELPERS (used by generation handler)
+    // ============================================================
+
     window.showMessage = function (text, type) {
         try { window.showToast && window.showToast(text, type); } catch (_) {}
         var msg = document.getElementById('generateMessage');
@@ -384,6 +453,9 @@
         });
     };
 
-    // Init on load
-    if (modelSelect) onModelOrModeChange();
+    // ============================================================
+    // INIT ON LOAD
+    // ============================================================
+
+    if (modelSelect) refreshAll();
 })();
