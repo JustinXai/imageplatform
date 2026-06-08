@@ -29,13 +29,17 @@ $modelDefaultSize = [];
 $modelModeOptions = [];
 $modelDefaultMode = [];
 $modelMaxRefImages = [];
+$modelMaxRefVideos = [];
+$modelMaxRefAudios = [];
 $modelCredits = [];
 $modelSupportsRef = [];
 
 foreach ($videoModels as $vm) {
     $vid = (int) $vm['id'];
     $modelSupportsRef[$vid] = (int) ($vm['supports_reference'] ?? 0);
-    $modelMaxRefImages[$vid] = max(1, (int) ($vm['max_reference_images'] ?? 1));
+    $modelMaxRefImages[$vid] = max(0, (int) ($vm['max_reference_images'] ?? 0));
+    $modelMaxRefVideos[$vid] = max(0, (int) ($vm['max_reference_videos'] ?? 0));
+    $modelMaxRefAudios[$vid] = max(0, (int) ($vm['max_reference_audios'] ?? 0));
     $modelCredits[$vid] = max(0, (int) ($vm['credits'] ?? 0));
 
     $dOpts = json_decode((string) ($vm['video_duration_options_json'] ?? ''), true);
@@ -68,7 +72,9 @@ foreach ($videoModels as $vm) {
     $defaultAspect = $modelDefaultAspect[$vid] ?? '16:9';
     $defaultSize = $modelDefaultSize[$vid] ?? 'auto';
     $defaultMode = $modelDefaultMode[$vid] ?? 'text_to_video';
-    $maxRef = $modelMaxRefImages[$vid] ?? 1;
+    $maxRef = $modelMaxRefImages[$vid] ?? 0;
+    $maxRefVid = $modelMaxRefVideos[$vid] ?? 0;
+    $maxRefAud = $modelMaxRefAudios[$vid] ?? 0;
     $defaultCost = $credits * max(1, $defaultDuration);
 
     $modelConfigJson[$vid] = [
@@ -81,6 +87,8 @@ foreach ($videoModels as $vm) {
         'mode_options' => array_values($mOpts),
         'default_mode' => $defaultMode,
         'max_ref_images' => $maxRef,
+        'max_ref_videos' => $maxRefVid,
+        'max_ref_audios' => $maxRefAud,
         'credits' => $credits,
         'default_cost' => $defaultCost,
         'supports_ref' => $modelSupportsRef[$vid] ?? 0,
@@ -188,6 +196,32 @@ render_header('视频生成', 'video');
                             </div>
                         </div>
                         <div class="edit-upload-preview" id="refPreview"></div>
+                    </div>
+
+                    <div class="field-v3 edit-upload-field hidden" id="videoUploadField">
+                        <label>参考视频（最多 <span data-max-video-count>1</span> 个）</label>
+                        <div class="edit-upload-box" id="videoUploadBox">
+                            <input name="edit_videos[]" type="file" accept="video/mp4,video/webm,video/quicktime" multiple id="refVideoInput">
+                            <div class="edit-upload-icon" aria-hidden="true">▶</div>
+                            <div>
+                                <strong>点击上传参考视频</strong>
+                                <small data-video-upload-hint>支持 MP4 / WEBM / MOV，可多次选择</small>
+                            </div>
+                        </div>
+                        <div class="edit-upload-preview" id="videoPreview"></div>
+                    </div>
+
+                    <div class="field-v3 edit-upload-field hidden" id="audioUploadField">
+                        <label>参考音频（最多 <span data-max-audio-count>1</span> 个）</label>
+                        <div class="edit-upload-box" id="audioUploadBox">
+                            <input name="edit_audios[]" type="file" accept="audio/mpeg,audio/wav,audio/mp4" multiple id="refAudioInput">
+                            <div class="edit-upload-icon" aria-hidden="true">♪</div>
+                            <div>
+                                <strong>点击上传参考音频</strong>
+                                <small data-video-upload-hint>支持 MP3 / WAV / M4A，可多次选择</small>
+                            </div>
+                        </div>
+                        <div class="edit-upload-preview" id="audioPreview"></div>
                     </div>
                     <?php endif; ?>
 

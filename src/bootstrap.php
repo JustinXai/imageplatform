@@ -187,6 +187,18 @@ function ensure_ai_models_capability_columns(): void
     if (empty($columns['video_input_mode_field'])) {
         db()->exec("ALTER TABLE ai_models ADD COLUMN video_input_mode_field VARCHAR(50) NOT NULL DEFAULT 'input_mode' AFTER video_size_field");
     }
+    if (empty($columns['max_reference_videos'])) {
+        db()->exec("ALTER TABLE ai_models ADD COLUMN max_reference_videos TINYINT UNSIGNED NOT NULL DEFAULT 0 AFTER video_input_mode_field");
+    }
+    if (empty($columns['max_reference_audios'])) {
+        db()->exec("ALTER TABLE ai_models ADD COLUMN max_reference_audios TINYINT UNSIGNED NOT NULL DEFAULT 0 AFTER max_reference_videos");
+    }
+    if (empty($columns['video_reference_video_field'])) {
+        db()->exec("ALTER TABLE ai_models ADD COLUMN video_reference_video_field VARCHAR(50) NOT NULL DEFAULT 'extra_videos' AFTER max_reference_audios");
+    }
+    if (empty($columns['video_reference_audio_field'])) {
+        db()->exec("ALTER TABLE ai_models ADD COLUMN video_reference_audio_field VARCHAR(50) NOT NULL DEFAULT 'extra_audios' AFTER video_reference_video_field");
+    }
 
     $checked = true;
 }

@@ -173,7 +173,9 @@ function generation_input_from_request(array $input, array $files): array
         // Load video model capabilities from DB
         $modelSupportsRef = 0;
         $modelRefRequired = 0;
-        $modelMaxRefImages = 1;
+        $modelMaxRefImages = 0;
+        $modelMaxRefVideos = 0;
+        $modelMaxRefAudios = 0;
         $modelFixedSeconds = 0;
         $modelDurationOptions = [];
         $modelDefaultDuration = null;
@@ -184,6 +186,8 @@ function generation_input_from_request(array $input, array $files): array
         $modelModeOptions = [];
         $modelDefaultMode = 'text_to_video';
         $modelRefField = 'reference_images';
+        $modelRefVideoField = 'extra_videos';
+        $modelRefAudioField = 'extra_audios';
         $modelDurationField = 'duration';
         $modelAspectField = 'aspect_ratio';
         $modelSizeField = 'size';
@@ -192,12 +196,13 @@ function generation_input_from_request(array $input, array $files): array
 
         if ($modelId > 0) {
             $stmt = db()->prepare(
-                'SELECT supports_reference, reference_required, max_reference_images, fixed_seconds, '
+                'SELECT supports_reference, reference_required, max_reference_images, max_reference_videos, max_reference_audios, fixed_seconds, '
                 . 'video_duration_options_json, video_default_duration, '
                 . 'video_aspect_options_json, video_default_aspect, '
                 . 'video_size_options_json, video_default_size, '
                 . 'video_mode_options_json, video_default_mode, '
-                . 'video_reference_field, video_duration_field, video_aspect_field, '
+                . 'video_reference_field, video_reference_video_field, video_reference_audio_field, '
+                . 'video_duration_field, video_aspect_field, '
                 . 'video_size_field, video_input_mode_field, credits '
                 . 'FROM ai_models WHERE id = ? AND is_active = 1 AND model_type = ? LIMIT 1'
             );
@@ -206,7 +211,9 @@ function generation_input_from_request(array $input, array $files): array
             if ($vm) {
                 $modelSupportsRef = (int) ($vm['supports_reference'] ?? 0);
                 $modelRefRequired = (int) ($vm['reference_required'] ?? 0);
-                $modelMaxRefImages = max(1, (int) ($vm['max_reference_images'] ?? 1));
+                $modelMaxRefImages = max(0, (int) ($vm['max_reference_images'] ?? 0));
+                $modelMaxRefVideos = max(0, (int) ($vm['max_reference_videos'] ?? 0));
+                $modelMaxRefAudios = max(0, (int) ($vm['max_reference_audios'] ?? 0));
                 $modelFixedSeconds = max(0, (int) ($vm['fixed_seconds'] ?? 0));
                 $modelCredits = max(0, (int) ($vm['credits'] ?? 0));
 
@@ -236,6 +243,10 @@ function generation_input_from_request(array $input, array $files): array
 
                 $modelRefField = trim((string) ($vm['video_reference_field'] ?? 'reference_images'));
                 if ($modelRefField === '') $modelRefField = 'reference_images';
+                $modelRefVideoField = trim((string) ($vm['video_reference_video_field'] ?? 'extra_videos'));
+                if ($modelRefVideoField === '') $modelRefVideoField = 'extra_videos';
+                $modelRefAudioField = trim((string) ($vm['video_reference_audio_field'] ?? 'extra_audios'));
+                if ($modelRefAudioField === '') $modelRefAudioField = 'extra_audios';
                 $modelDurationField = trim((string) ($vm['video_duration_field'] ?? 'duration'));
                 if ($modelDurationField === '') $modelDurationField = 'duration';
                 $modelAspectField = trim((string) ($vm['video_aspect_field'] ?? 'aspect_ratio'));
@@ -275,37 +286,80 @@ function generation_input_from_request(array $input, array $files): array
         }
         $effectiveSize = $rawSize;
 
-        // Reference image validation based on mode
+        // Reference validation based on mode
         $inputImages = [];
-        $hasUploads = request_has_uploaded_edit_images($files);
+        $inputVideos = [];
+        $inputAudios = [];
+        $hasImageUploads = request_has_uploaded_edit_images($files);
+        $hasVideoUploads = !empty($_FILES['edit_videos']);
+        $hasAudioUploads = !empty($_FILES['edit_audios']);
+
         $requiredImages = 0;
-        if ($effectiveMode === 'first_frame' || $effectiveMode === 'first_last_frame' || $effectiveMode === 'multi_reference') {
-            $requiredImages = $effectiveMode === 'first_last_frame' ? 2 : 1;
+        $requiredVideos = 0;
+        $requiredAudios = 0;
+
+        if ($effectiveMode === 'first_frame') {
+            $requiredImages = 1;
+        } elseif ($effectiveMode === 'first_last_frame') {
+            $requiredImages = 2;
+        } elseif ($effectiveMode === 'multi_reference') {
+            $requiredImages = 1;
+        } elseif ($effectiveMode === 'video_edit') {
+            $requiredVideos = 1;
+        } elseif ($effectiveMode === 'video_reference') {
+            $requiredVideos = 1;
+        } elseif ($effectiveMode === 'audio_reference') {
+            $requiredAudios = 1;
         }
 
-        if ($hasUploads || $effectiveMode !== 'text_to_video') {
+        // Image uploads
+        if ($hasImageUploads || $requiredImages > 0) {
             $inputImages = generation_uploaded_images_from_files($files);
-            $uploadCount = count($inputImages);
-            if ($uploadCount === 0) {
-                if ($requiredImages > 0) {
-                    throw new InvalidArgumentException("当前模式「{$effectiveMode}」至少需要 {$requiredImages} 张参考图片。");
+            $imageCount = count($inputImages);
+            if ($requiredImages > 0 && $imageCount < $requiredImages) {
+                throw new InvalidArgumentException("当前模式「{$effectiveMode}」至少需要 {$requiredImages} 张参考图片。");
+            }
+            if ($imageCount > 0) {
+                if ($effectiveMode === 'text_to_video') {
+                    throw new InvalidArgumentException('文生视频模式不需要参考图片。');
                 }
-            } else {
-                if ($effectiveMode === 'text_to_video' && $uploadCount > 0) {
-                    throw new InvalidArgumentException('文生视频模式不需要参考图片，请切换到参考模式或去掉图片。');
-                }
-                if ($effectiveMode === 'first_frame' && $uploadCount > 1) {
+                if ($effectiveMode === 'first_frame' && $imageCount > 1) {
                     throw new InvalidArgumentException('首帧参考模式最多上传 1 张参考图片。');
                 }
-                if ($effectiveMode === 'first_last_frame' && ($uploadCount < 2 || $uploadCount > 2)) {
-                    throw new InvalidArgumentException('首尾帧模式必须上传恰好 2 张参考图片（首帧 / 尾帧）。');
+                if ($effectiveMode === 'first_last_frame' && ($imageCount < 2 || $imageCount > 2)) {
+                    throw new InvalidArgumentException('首尾帧模式必须上传恰好 2 张参考图片。');
                 }
-                if ($effectiveMode === 'multi_reference' && $uploadCount > $modelMaxRefImages) {
+                if ($effectiveMode === 'multi_reference' && $imageCount > $modelMaxRefImages) {
+                    throw new InvalidArgumentException("当前模型最多允许 {$modelMaxRefImages} 张参考图片。");
+                }
+                if (($effectiveMode === 'video_edit' || $effectiveMode === 'video_reference') && $imageCount > $modelMaxRefImages) {
                     throw new InvalidArgumentException("当前模型最多允许 {$modelMaxRefImages} 张参考图片。");
                 }
             }
-        } elseif ($requiredImages > 0) {
-            throw new InvalidArgumentException("当前模式「{$effectiveMode}」至少需要 {$requiredImages} 张参考图片。");
+        }
+
+        // Video uploads
+        if ($hasVideoUploads || $requiredVideos > 0) {
+            $inputVideos = generation_uploaded_videos_from_files($files);
+            $videoCount = count($inputVideos);
+            if ($requiredVideos > 0 && $videoCount < $requiredVideos) {
+                throw new InvalidArgumentException("当前模式「{$effectiveMode}」至少需要 {$requiredVideos} 个参考视频。");
+            }
+            if ($videoCount > 0 && $modelMaxRefVideos > 0 && $videoCount > $modelMaxRefVideos) {
+                throw new InvalidArgumentException("当前模型最多允许 {$modelMaxRefVideos} 个参考视频。");
+            }
+        }
+
+        // Audio uploads
+        if ($hasAudioUploads || $requiredAudios > 0) {
+            $inputAudios = generation_uploaded_audios_from_files($files);
+            $audioCount = count($inputAudios);
+            if ($requiredAudios > 0 && $audioCount < $requiredAudios) {
+                throw new InvalidArgumentException("当前模式「{$effectiveMode}」至少需要 {$requiredAudios} 个参考音频。");
+            }
+            if ($audioCount > 0 && $modelMaxRefAudios > 0 && $audioCount > $modelMaxRefAudios) {
+                throw new InvalidArgumentException("当前模型最多允许 {$modelMaxRefAudios} 个参考音频。");
+            }
         }
 
         // Credits: credits × duration (backend enforced, not from frontend)
@@ -520,70 +574,129 @@ function generation_uploaded_images_from_files(array $files): array
         if ($tmpName === '' || !is_uploaded_file($tmpName)) {
             throw new InvalidArgumentException('Reference image is invalid.');
         }
-        $maxBytes = max_edit_image_mb() * 1024 * 1024;
-        if ($size <= 0 || $size > $maxBytes) {
-            throw new InvalidArgumentException('Each reference image must be no larger than ' . max_edit_image_mb() . 'MB.');
-        }
 
-        $extension = strtolower(pathinfo((string) $name, PATHINFO_EXTENSION));
-        if (!in_array($extension, ['png', 'jpg', 'jpeg', 'webp'], true)) {
-            throw new InvalidArgumentException('Reference image extension must be png, jpg, jpeg, or webp.');
-        }
-
-        $mime = '';
-        if (function_exists('finfo_open')) {
-            $finfo = finfo_open(FILEINFO_MIME_TYPE);
-            if ($finfo) {
-                $mime = (string) finfo_file($finfo, $tmpName);
-                finfo_close($finfo);
-            }
-        }
-        if ($mime === '') {
-            $mime = (string) ($file['type'][$index] ?? '');
-        }
+        $finfo = new finfo(FILEINFO_MIME_TYPE);
+        $mime  = $finfo->file($tmpName);
         if (!in_array($mime, ['image/png', 'image/jpeg', 'image/webp'], true)) {
-            throw new InvalidArgumentException('Reference image MIME type must be png, jpeg, or webp.');
+            throw new InvalidArgumentException('Unsupported image format: ' . $mime);
         }
-        $extensionMimeMap = [
-            'png'  => 'image/png',
-            'jpg'  => 'image/jpeg',
-            'jpeg' => 'image/jpeg',
-            'webp' => 'image/webp',
+        if ($size > (int) ini_get('upload_max_filesize')) {
+            throw new InvalidArgumentException('Reference image exceeds size limit.');
+        }
+        $images[] = [
+            'name' => basename((string) $name),
+            'path' => $tmpName,
+            'mime' => $mime,
+            'size' => $size,
+            'url'  => '',
         ];
-        if (($extensionMimeMap[$extension] ?? '') !== $mime) {
-            throw new InvalidArgumentException('Reference image extension does not match the actual MIME type.');
-        }
-
-        $imageSize = @getimagesize($tmpName);
-        if (!is_array($imageSize) || empty($imageSize[0]) || empty($imageSize[1])) {
-            throw new InvalidArgumentException('Reference image is not a valid image file.');
-        }
-        $width        = (int) $imageSize[0];
-        $height       = (int) $imageSize[1];
-        $maxDimension = max_edit_image_dimension();
-        if ($width > $maxDimension || $height > $maxDimension) {
-            throw new InvalidArgumentException('Reference image dimensions must be no larger than ' . $maxDimension . 'px.');
-        }
-
-        $content = file_get_contents($tmpName);
-        if ($content === false) {
-            throw new InvalidArgumentException('Failed to read the reference image.');
-        }
-
-        $inputImage = [
-            'name'     => basename((string) $name) ?: ('image-' . (count($images) + 1)),
-            'mime_type' => $mime,
-        ];
-        if (image_storage_mode() === 'base64') {
-            $inputImage['base64'] = base64_encode($content);
-        } else {
-            $inputImage['url'] = save_input_image_file($content, $mime);
-        }
-
-        $images[] = $inputImage;
     }
 
     return $images;
+}
+
+function generation_uploaded_videos_from_files(array $files): array
+{
+    if (empty($files['edit_videos'])) {
+        return [];
+    }
+
+    $file = $files['edit_videos'];
+    $names    = is_array($file['name']) ? $file['name'] : [$file['name']];
+    $tmpNames = is_array($file['tmp_name']) ? $file['tmp_name'] : [$file['tmp_name']];
+    $errors   = is_array($file['error']) ? $file['error'] : [$file['error']];
+    $sizes    = is_array($file['size']) ? $file['size'] : [$file['size']];
+    $limit    = 9;
+    $videos   = [];
+
+    foreach ($names as $index => $name) {
+        $error = (int) ($errors[$index] ?? UPLOAD_ERR_NO_FILE);
+        if ($error === UPLOAD_ERR_NO_FILE) {
+            continue;
+        }
+        if ($error !== UPLOAD_ERR_OK) {
+            throw new InvalidArgumentException('Reference video upload failed.');
+        }
+        if (count($videos) >= $limit) {
+            throw new InvalidArgumentException('You can upload at most ' . $limit . ' reference videos at one time.');
+        }
+
+        $tmpName = (string) ($tmpNames[$index] ?? '');
+        $size    = (int) ($sizes[$index] ?? 0);
+        if ($tmpName === '' || !is_uploaded_file($tmpName)) {
+            throw new InvalidArgumentException('Reference video is invalid.');
+        }
+
+        $finfo = new finfo(FILEINFO_MIME_TYPE);
+        $mime  = $finfo->file($tmpName);
+        if (!in_array($mime, ['video/mp4', 'video/webm', 'video/quicktime'], true)) {
+            throw new InvalidArgumentException('Unsupported video format: ' . $mime);
+        }
+        if ($size > (int) ini_get('upload_max_filesize')) {
+            throw new InvalidArgumentException('Reference video exceeds size limit.');
+        }
+        $videos[] = [
+            'name' => basename((string) $name),
+            'path' => $tmpName,
+            'mime' => $mime,
+            'size' => $size,
+            'url'  => '',
+        ];
+    }
+
+    return $videos;
+}
+
+function generation_uploaded_audios_from_files(array $files): array
+{
+    if (empty($files['edit_audios'])) {
+        return [];
+    }
+
+    $file = $files['edit_audios'];
+    $names    = is_array($file['name']) ? $file['name'] : [$file['name']];
+    $tmpNames = is_array($file['tmp_name']) ? $file['tmp_name'] : [$file['tmp_name']];
+    $errors   = is_array($file['error']) ? $file['error'] : [$file['error']];
+    $sizes    = is_array($file['size']) ? $file['size'] : [$file['size']];
+    $limit    = 9;
+    $audios   = [];
+
+    foreach ($names as $index => $name) {
+        $error = (int) ($errors[$index] ?? UPLOAD_ERR_NO_FILE);
+        if ($error === UPLOAD_ERR_NO_FILE) {
+            continue;
+        }
+        if ($error !== UPLOAD_ERR_OK) {
+            throw new InvalidArgumentException('Reference audio upload failed.');
+        }
+        if (count($audios) >= $limit) {
+            throw new InvalidArgumentException('You can upload at most ' . $limit . ' reference audios at one time.');
+        }
+
+        $tmpName = (string) ($tmpNames[$index] ?? '');
+        $size    = (int) ($sizes[$index] ?? 0);
+        if ($tmpName === '' || !is_uploaded_file($tmpName)) {
+            throw new InvalidArgumentException('Reference audio is invalid.');
+        }
+
+        $finfo = new finfo(FILEINFO_MIME_TYPE);
+        $mime  = $finfo->file($tmpName);
+        if (!in_array($mime, ['audio/mpeg', 'audio/wav', 'audio/mp4', 'audio/x-m4a'], true)) {
+            throw new InvalidArgumentException('Unsupported audio format: ' . $mime);
+        }
+        if ($size > (int) ini_get('upload_max_filesize')) {
+            throw new InvalidArgumentException('Reference audio exceeds size limit.');
+        }
+        $audios[] = [
+            'name' => basename((string) $name),
+            'path' => $tmpName,
+            'mime' => $mime,
+            'size' => $size,
+            'url'  => '',
+        ];
+    }
+
+    return $audios;
 }
 
 /**

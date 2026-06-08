@@ -49,6 +49,8 @@ function video_payload_formats(array $record): array
     $videoSize   = trim((string) ($record['video_size'] ?? 'auto'));
     $videoMode   = trim((string) ($record['video_mode'] ?? 'text_to_video'));
     $refUrls     = $record['input_images'] ?? [];
+    $refVideoUrls = $record['input_videos'] ?? [];
+    $refAudioUrls = $record['input_audios'] ?? [];
 
     // Field mappings from record (set in generation_input_from_request)
     $durationField = trim((string) ($record['video_duration_field'] ?? 'duration'));
@@ -56,6 +58,8 @@ function video_payload_formats(array $record): array
     $sizeField     = trim((string) ($record['video_size_field'] ?? 'size'));
     $inputModeField = trim((string) ($record['video_input_mode_field'] ?? 'input_mode'));
     $refField      = trim((string) ($record['video_ref_field'] ?? 'reference_images'));
+    $refVideoField = trim((string) ($record['video_ref_video_field'] ?? 'extra_videos'));
+    $refAudioField = trim((string) ($record['video_ref_audio_field'] ?? 'extra_audios'));
 
     // newtoken_video_async: 构建 /v1/videos 接口专用 payload
     if ($adapter === 'newtoken_video_async') {
@@ -96,6 +100,30 @@ function video_payload_formats(array $record): array
             }
             if (!empty($refs)) {
                 $payload[$refField] = $refs;
+            }
+        }
+
+        // Reference videos field
+        if (!empty($refVideoUrls) && is_array($refVideoUrls)) {
+            $vids = [];
+            foreach ($refVideoUrls as $v) {
+                if (is_string($v)) $vids[] = $v;
+                elseif (is_array($v) && isset($v['url'])) $vids[] = $v['url'];
+            }
+            if (!empty($vids)) {
+                $payload[$refVideoField] = $vids;
+            }
+        }
+
+        // Reference audio field
+        if (!empty($refAudioUrls) && is_array($refAudioUrls)) {
+            $auds = [];
+            foreach ($refAudioUrls as $a) {
+                if (is_string($a)) $auds[] = $a;
+                elseif (is_array($a) && isset($a['url'])) $auds[] = $a['url'];
+            }
+            if (!empty($auds)) {
+                $payload[$refAudioField] = $auds;
             }
         }
 
