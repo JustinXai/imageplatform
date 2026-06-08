@@ -16,7 +16,7 @@ $stats = [
     'success' => (int) db()->query('SELECT COUNT(*) FROM generation_records WHERE status = "succeeded" AND deleted_at IS NULL')->fetchColumn(),
     'failed'  => (int) db()->query('SELECT COUNT(*) FROM generation_records WHERE status = "failed" AND deleted_at IS NULL')->fetchColumn(),
     'queued'  => (int) db()->query('SELECT COUNT(*) FROM generation_records WHERE status = "queued" AND deleted_at IS NULL')->fetchColumn(),
-    'credits' => (int) db()->query('SELECT COALESCE(SUM(credits_charged), 0) FROM generation_records WHERE status = "succeeded" AND deleted_at IS NULL')->fetchColumn(),
+    'credits' => (int) db()->query('SELECT COALESCE(SUM(credits_cost), 0) FROM generation_records WHERE status = "succeeded" AND deleted_at IS NULL')->fetchColumn(),
 ];
 
 $perPage = 12;
@@ -31,9 +31,9 @@ if ($page > $totalPages) $page = $totalPages;
 $offset = ($page - 1) * $perPage;
 
 $sql = 'SELECT r.id, r.user_id, r.status, r.mode, r.model, r.prompt, r.size, r.quality,
-            r.output_format, r.image_url, r.mime_type, r.credits_charged, r.error_message,
+            r.output_format, r.output_url, r.mime_type, r.credits_cost, r.error_message,
             r.input_images_json, r.started_at, r.finished_at, r.deleted_at, r.created_at,
-            r.image_base64 IS NOT NULL AS has_image_base64, u.username
+            r.output_base64 IS NOT NULL AS has_image_base64, u.username
      FROM generation_records r
      JOIN users u ON u.id = r.user_id' .
      ($modeFilter !== '' ? ' WHERE r.mode = ' . db()->quote($modeFilter) : '') . '
@@ -117,7 +117,7 @@ render_admin_nav('index');
                      data-size="<?= e($r['size']) ?>"
                      data-quality="<?= e($r['quality']) ?>"
                      data-format="<?= e($r['output_format']) ?>"
-                     data-credits="<?= (int) $r['credits_charged'] ?>"
+                     data-credits="<?= (int) ($r['credits_cost'] ?? 0) ?>"
                      data-created="<?= e($r['created_at']) ?>"
                      data-finished="<?= e($r['finished_at'] ?: '-') ?>"
                      data-error="<?= e($r['error_message'] ?: '') ?>"

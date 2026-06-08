@@ -10,7 +10,7 @@ if ($recordId < 1) {
 }
 
 $stmt = db()->prepare(
-    'SELECT id, user_id, image_base64, image_url, mime_type
+    'SELECT id, user_id, output_base64, output_url, mime_type
      FROM generation_records
      WHERE id = ?
      LIMIT 1'
@@ -26,15 +26,15 @@ if ($user['role'] !== 'admin' && (int) $record['user_id'] !== (int) $user['id'])
     http_response_code(403);
     exit;
 }
-if (!empty($record['image_url'])) {
-    redirect((string) $record['image_url']);
+if (!empty($record['output_url'])) {
+    redirect((string) $record['output_url']);
 }
-if (empty($record['image_base64'])) {
+if (empty($record['output_base64'])) {
     http_response_code(404);
     exit;
 }
 
-$binary = base64_decode((string) $record['image_base64'], true);
+$binary = base64_decode((string) $record['output_base64'], true);
 if ($binary === false) {
     http_response_code(404);
     exit;

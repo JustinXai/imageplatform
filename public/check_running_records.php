@@ -16,9 +16,9 @@ $mode = (string) ($_GET['mode'] ?? '');
 $modeWhere = $mode !== '' ? ' AND mode = ' . db()->quote($mode) : '';
 
 $stmt = db()->prepare(
-    "SELECT id, status, mode, prompt, size, output_format, credits_charged,
+    "SELECT id, status, mode, prompt, size, output_format, credits_cost,
             error_message, started_at, finished_at, created_at,
-            image_base64 IS NOT NULL AS has_image_base64
+            output_base64 IS NOT NULL AS has_image_base64
      FROM generation_records
      WHERE user_id = ? AND deleted_at IS NULL AND status IN ('running', 'queued'){$modeWhere}
      ORDER BY created_at DESC

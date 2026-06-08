@@ -52,7 +52,7 @@ try {
     // 列表
     $stmt = db()->prepare(
         "SELECT id, user_id, status, mode, model, prompt, size, quality, output_format,
-                image_url, mime_type, credits_charged, error_message, started_at, finished_at,
+                output_url, mime_type, credits_cost, error_message, started_at, finished_at,
                 deleted_at, created_at,
                 video_url, video_base64, video_mime_type
          FROM generation_records

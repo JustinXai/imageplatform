@@ -968,10 +968,9 @@ function perform_video_generation_record(int $recordId, ?int $timeout = null): a
     $record  = generation_record_by_id($recordId);
     $timeout = $timeout ?? max(60, (int) config('generation.timeout', 600));
 
-    // 优先使用配置快照锛堝垱寤轰娇鍓嶇殑閰嶇疆锛?
-    $record = apply_generation_config_snapshot($record);
-
+    // 优先使用配置快照（创建时抄存的配置），但仍用实时 api_key
     $config = resolve_video_generation_config($record);
+    $config = apply_generation_config_snapshot($record, $config);
     $record['model'] = $config['model'];
     $record['invoke_mode'] = $config['invoke_mode'];
 

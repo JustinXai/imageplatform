@@ -100,7 +100,7 @@ try {
                 'size' => $params['size'] ?? 'auto',
                 'quality' => $params['quality'] ?? 'auto',
                 'format' => $params['format'] ?? 'png',
-                'credits_charged' => 0,
+                'credits_cost' => 0,
                 'selected_aspect' => $params['image_aspect'] ?? ($params['video_aspect'] ?? ''),
                 'selected_size' => $params['size'] ?? '',
                 'selected_duration' => (int) ($params['video_duration'] ?? 0),

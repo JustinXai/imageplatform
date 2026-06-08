@@ -31,8 +31,8 @@ $offset = ($page - 1) * $perPage;
 $stmt = db()->prepare(
     'SELECT id, user_id, status, mode, model, prompt, size, quality, output_format,
             input_images_json,
-            image_url, mime_type, credits_charged, error_message, started_at, finished_at,
-            deleted_at, created_at, image_base64 IS NOT NULL AS has_image_base64
+            output_url, mime_type, credits_cost, error_message, started_at, finished_at,
+            deleted_at, created_at, output_base64 IS NOT NULL AS has_image_base64
      FROM generation_records
      WHERE user_id = ? AND deleted_at IS NULL' . $modeWhere . '
      ORDER BY created_at DESC
@@ -104,7 +104,7 @@ render_header('生成记录', 'records');
                         data-size="<?= e($record['size']) ?>"
                         data-quality="<?= e($record['quality']) ?>"
                         data-format="<?= e($record['output_format']) ?>"
-                        data-credits="<?= (int) $record['credits_charged'] ?>"
+                        data-credits="<?= (int) ($record['credits_cost'] ?? 0) ?>"
                         data-created="<?= e($record['created_at']) ?>"
                         data-finished="<?= e($record['finished_at'] ?: '-') ?>"
                         data-error="<?= e($record['error_message'] ?: '') ?>"

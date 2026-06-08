@@ -22,14 +22,14 @@ if ($page > $maxPage) $page = $maxPage;
 $offset = ($page - 1) * $perPage;
 
 $sumStmt = db()->prepare(
-    "SELECT COALESCE(SUM(credits_charged), 0) FROM generation_records WHERE user_id = ? AND deleted_at IS NULL AND status = 'succeeded'"
+    "SELECT COALESCE(SUM(credits_cost), 0) FROM generation_records WHERE user_id = ? AND deleted_at IS NULL AND status = 'succeeded'"
 );
 $sumStmt->execute([$user['id']]);
 $totalCreditsUsed = (int) $sumStmt->fetchColumn();
 
 // 本月消耗
 $sumMonth = db()->prepare(
-    "SELECT COALESCE(SUM(credits_charged), 0) FROM generation_records
+    "SELECT COALESCE(SUM(credits_cost), 0) FROM generation_records
      WHERE user_id = ? AND deleted_at IS NULL AND status = 'succeeded'
        AND created_at >= DATE_FORMAT(NOW(), '%Y-%m-01')"
 );
@@ -38,7 +38,7 @@ $monthCredits = (int) $sumMonth->fetchColumn();
 
 // 记录
 $stmt = db()->prepare(
-    "SELECT id, status, mode, prompt, size, quality, output_format, credits_charged, created_at, finished_at, error_message
+    "SELECT id, status, mode, prompt, size, quality, output_format, credits_cost, created_at, finished_at, error_message
      FROM generation_records
      WHERE user_id = ? AND deleted_at IS NULL
      ORDER BY created_at DESC
@@ -158,7 +158,7 @@ render_header('点数记录', 'credits');
                         };
                         $isSucceeded = $r['status'] === 'succeeded';
                         $isFailed    = $r['status'] === 'failed';
-                        $creditsNum  = (int) $r['credits_charged'];
+                        $creditsNum  = (int) ($r['credits_cost'] ?? 0);
                         ?>
                         <div class="credits-item">
                             <div class="icon <?= $modeClass ?>"><?= $modeIcon ?></div>

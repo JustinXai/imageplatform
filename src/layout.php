@@ -372,12 +372,12 @@ function render_admin_nav(string $active): void
  */
 function record_image_src(array $record): ?string
 {
-    if (!empty($record['image_url'])) {
-        return $record['image_url'];
+    if (!empty($record['output_url'])) {
+        return $record['output_url'];
     }
-    if (!empty($record['image_base64'])) {
+    if (!empty($record['output_base64'])) {
         $mime = $record['mime_type'] ?: 'image/png';
-        return 'data:' . $mime . ';base64,' . $record['image_base64'];
+        return 'data:' . $mime . ';base64,' . $record['output_base64'];
     }
     if (!empty($record['has_image_base64']) && !empty($record['id'])) {
         return '/record_image?id=' . (int) $record['id'];

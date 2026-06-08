@@ -182,8 +182,8 @@ function collect_referenced_upload_paths(): array
     $paths = [];
     $pdo = db();
 
-    // 1. 收集 image_url
-    $stmt = $pdo->query("SELECT image_url FROM generation_records WHERE image_url IS NOT NULL AND image_url != ''");
+    // 1. 收集 output_url
+    $stmt = $pdo->query("SELECT output_url FROM generation_records WHERE output_url IS NOT NULL AND output_url != ''");
     while ($row = $stmt->fetchColumn()) {
         $fp = local_public_file_from_url((string) $row);
         if ($fp !== null) {
@@ -419,15 +419,15 @@ render_admin_nav('uploads');
     $page = max(1, (int) ($_GET['page'] ?? 1));
     $offset = ($page - 1) * $perPage;
 
-    $stmt = db()->prepare("SELECT COUNT(*) FROM generation_records WHERE image_url IS NOT NULL AND image_url != '' AND image_url NOT LIKE 'http%' AND image_url NOT LIKE 'https%'");
+    $stmt = db()->prepare("SELECT COUNT(*) FROM generation_records WHERE output_url IS NOT NULL AND output_url != '' AND output_url NOT LIKE 'http%' AND output_url NOT LIKE 'https%'");
     $stmt->execute();
     $total = (int) $stmt->fetchColumn();
 
     $stmt = db()->prepare(
-        "SELECT r.id, r.user_id, r.image_url, r.status, r.mode, r.prompt, r.finished_at, r.deleted_at, u.username
+        "SELECT r.id, r.user_id, r.output_url, r.status, r.mode, r.prompt, r.finished_at, r.deleted_at, u.username
          FROM generation_records r
          JOIN users u ON u.id = r.user_id
-         WHERE r.image_url IS NOT NULL AND r.image_url != '' AND r.image_url NOT LIKE 'http%' AND r.image_url NOT LIKE 'https%'
+         WHERE r.output_url IS NOT NULL AND r.output_url != '' AND r.output_url NOT LIKE 'http%' AND r.output_url NOT LIKE 'https%'
          ORDER BY r.created_at DESC
          LIMIT ? OFFSET ?"
     );
@@ -458,7 +458,7 @@ render_admin_nav('uploads');
                     <?php $isDeleted = !empty($record['deleted_at']); ?>
                     <div class="upload-card" style="<?= $isDeleted ? 'opacity:0.5' : '' ?>">
                         <div class="thumb">
-                            <img src="<?= e($record['image_url']) ?>" alt="生成图片"
+                            <img src="<?= e($record['output_url']) ?>" alt="生成图片"
                                  onerror="this.style.display='none';this.nextElementSibling.style.display='grid'">
                             <span class="no-img" style="display:none">文件丢失</span>
                         </div>
@@ -471,7 +471,7 @@ render_admin_nav('uploads');
                             <span style="font-size:11px;color:var(--text-muted)"><?= e($record['finished_at'] ?: $record['deleted_at'] ?: '-') ?></span>
                         </div>
                         <div class="actions">
-                            <a class="button secondary small" href="<?= e($record['image_url']) ?>" target="_blank" rel="noopener">查看</a>
+                            <a class="button secondary small" href="<?= e($record['output_url']) ?>" target="_blank" rel="noopener">查看</a>
                         </div>
                     </div>
                 <?php endforeach; ?>

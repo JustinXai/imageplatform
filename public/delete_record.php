@@ -43,7 +43,7 @@ if ($recordId < 1) {
 // ============================================================
 // 2. 查询记录，获取图片文件路径（物理删除文件）
 // ============================================================
-$stmt = db()->prepare('SELECT id, user_id, image_url, input_images_json FROM generation_records WHERE id = ? AND deleted_at IS NULL');
+$stmt = db()->prepare('SELECT id, user_id, output_url, input_images_json FROM generation_records WHERE id = ? AND deleted_at IS NULL');
 $stmt->execute([$recordId]);
 $record = $stmt->fetch();
 
@@ -61,8 +61,8 @@ if ($user['role'] !== 'admin' && (int) $record['user_id'] !== (int) $user['id'])
 // ============================================================
 
 // 3a. 删除生成的图片文件
-if (!empty($record['image_url'])) {
-    $filePath = local_public_file_from_url((string) $record['image_url']);
+if (!empty($record['output_url'])) {
+    $filePath = local_public_file_from_url((string) $record['output_url']);
     if ($filePath !== null && is_file($filePath)) {
         @unlink($filePath);
     }

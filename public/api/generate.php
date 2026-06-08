@@ -38,7 +38,17 @@ try {
     $mode = (string) ($input['mode'] ?? 'draw');
     if ($mode === 'video') {
         require_api_permission('generate_video');
-        $aiModelId = 0;
+        $requestedModelId = (int) ($input['ai_model_id'] ?? 0);
+        if ($requestedModelId <= 0) {
+            $stmt = db()->prepare('SELECT id FROM ai_models WHERE is_active = 1 AND model_type = ? AND fixed_seconds > 0 ORDER BY sort_order ASC LIMIT 1');
+            $stmt->execute(['video']);
+            $aiModelId = (int) $stmt->fetchColumn();
+            if ($aiModelId <= 0) {
+                throw new RuntimeException('没有可用的视频模型。');
+            }
+        } else {
+            $aiModelId = $requestedModelId;
+        }
     } else {
         require_api_permission('generate_image');
         $requestedModel = trim((string) ($input['model'] ?? ''));
