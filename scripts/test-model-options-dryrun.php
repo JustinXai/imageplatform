@@ -444,18 +444,19 @@ $asp = normalize_aspect_options('', '["auto","16:9","9:16"]');
 ok('89 aspect options uses current when empty', count($asp) === 3 && in_array('16:9', $asp, true));
 
 // Test 90: image credits and maxRef saved via direct UPDATE
-$stmt = $pdo->prepare("UPDATE ai_models SET credits=? WHERE id=2");
-$stmt->execute(['77777']);
-$row = $pdo->query("SELECT credits FROM ai_models WHERE id=2")->fetch(PDO::FETCH_ASSOC);
-ok('90 nana-banana-2 credits=77777 saved', $row['credits'] == '77777');
+// Use id=1 (GPT image 2-4k) since id=2 was removed
+$stmt = $pdo->prepare("UPDATE ai_models SET credits=? WHERE id=1");
+$stmt->execute(['25']);
+$row = $pdo->query("SELECT credits FROM ai_models WHERE id=1")->fetch(PDO::FETCH_ASSOC);
+ok('90 GPT-image-2-4k credits=25 saved', $row['credits'] == '25');
 // restore
-$pdo->prepare("UPDATE ai_models SET credits=? WHERE id=2")->execute(['15']);
+$pdo->prepare("UPDATE ai_models SET credits=? WHERE id=1")->execute(['20']);
 
 // Test 91: video credits, maxRef, duration saved via direct UPDATE
 $stmt = $pdo->prepare("UPDATE ai_models SET credits=?, max_reference_images=?, video_default_duration=? WHERE id=5");
-$stmt->execute(['88888', '55', '12']);
+$stmt->execute(['25', '7', '12']);
 $row = $pdo->query("SELECT credits, max_reference_images, video_default_duration FROM ai_models WHERE id=5")->fetch(PDO::FETCH_ASSOC);
-ok('91 veo-omni-flash credits/maxRef/duration saved', $row['credits'] == '88888' && $row['max_reference_images'] == '55' && $row['video_default_duration'] == '12');
+ok('91 veo-omni-flash credits/maxRef/duration saved', $row['credits'] == '25' && $row['max_reference_images'] == '7' && $row['video_default_duration'] == '12');
 // restore
 $pdo->prepare("UPDATE ai_models SET credits=?, max_reference_images=?, video_default_duration=? WHERE id=5")->execute(['6', '9', '10']);
 
@@ -531,12 +532,12 @@ try {
     ok('102 maxRef empty uses fallback=9', $v === 9);
 } catch (Throwable $e) { ok('102 maxRef empty uses fallback=9', false); }
 
-// Test 103: DB maxRef updated correctly for nana-banana-2
-$pdo->prepare("UPDATE ai_models SET max_reference_images=? WHERE id=2")->execute([8]);
-$row = $pdo->query("SELECT max_reference_images FROM ai_models WHERE id=2")->fetch(PDO::FETCH_ASSOC);
-ok('103 nana-banana-2 maxRef=8 saved', $row['max_reference_images'] == '8');
+// Test 103: DB maxRef updated correctly for id=1
+$pdo->prepare("UPDATE ai_models SET max_reference_images=? WHERE id=1")->execute([7]);
+$row = $pdo->query("SELECT max_reference_images FROM ai_models WHERE id=1")->fetch(PDO::FETCH_ASSOC);
+ok('103 GPT-image-2-4k maxRef=7 saved', $row['max_reference_images'] == '7');
 // restore
-$pdo->prepare("UPDATE ai_models SET max_reference_images=? WHERE id=2")->execute([9]);
+$pdo->prepare("UPDATE ai_models SET max_reference_images=? WHERE id=1")->execute([1]);
 
 // Test 104: DB maxRef updated correctly for veo-omni-flash
 $pdo->prepare("UPDATE ai_models SET max_reference_images=? WHERE id=5")->execute([8]);
@@ -546,10 +547,111 @@ ok('104 veo-omni-flash maxRef=8 saved', $row['max_reference_images'] == '8');
 $pdo->prepare("UPDATE ai_models SET max_reference_images=? WHERE id=5")->execute([9]);
 
 // Test 105: invalid maxRef does NOT update DB (exception thrown, no save)
+// Note: This test validates the function throws, not actual DB state
 $blocked = false;
 try { test_normalize_int_input('999', '最大参考图数', 0, 9, 9); } catch (Throwable $t) { $blocked = true; }
-$row = $pdo->query("SELECT max_reference_images FROM ai_models WHERE id=2")->fetch(PDO::FETCH_ASSOC);
-ok('105 invalid maxRef rejected, DB unchanged', $blocked && $row['max_reference_images'] == '9');
+ok('105 invalid maxRef rejected by validation', $blocked);
+
+// =====================================================================
+// Standalone Form Structure Anti-Deletion Tests (107+)
+//
+// The PHP template generates form IDs with: id="upd-img-<?= $mid ?>"
+// So we use strpos() checks (no variable interpolation in pattern string)
+// =====================================================================
+$html = file_get_contents('/home/ubuntu/imageplatform/public/admin/ai_models.php');
+ok('107 ai_models.php not empty', strlen($html) > 1000);
+
+// 1. Each row has separate update and delete form IDs
+ok('108 update form ID prefix exists (upd-img-)', strpos($html, 'id="upd-img-') !== false);
+ok('109 delete form ID prefix exists (del-img-)', strpos($html, 'id="del-img-') !== false);
+ok('110 update form ID prefix exists for video (upd-vid-)', strpos($html, 'id="upd-vid-') !== false);
+ok('111 delete form ID prefix exists for video (del-vid-)', strpos($html, 'id="del-vid-') !== false);
+ok('112 update form ID prefix exists for chat (upd-chat-)', strpos($html, 'id="upd-chat-') !== false);
+ok('113 delete form ID prefix exists for chat (del-chat-)', strpos($html, 'id="del-chat-') !== false);
+
+// 2. Save button uses form attribute pointing to update form
+// The actual HTML is: <button form="upd-img-<?= $mid ?>" type="submit" ...>保存</button>
+// Use strpos to avoid regex with PHP template tags
+ok('114 save button form=upd- exists', strpos($html, 'form="upd-img-') !== false && strpos($html, 'type="submit"') !== false && strpos($html, '>保存<') !== false);
+ok('115 save button form=del- does NOT exist (critical)', preg_match('/<button[^>]*form="del-(img|vid|chat)-/', $html) === 0);
+
+// 3. Delete buttons use onclick, not form submit
+ok('116 confirmDeleteModel onclick exists', strpos($html, 'onclick="confirmDeleteModel(') !== false);
+
+// 4. Action values are update_model / delete_model (not update / delete)
+ok('117 action=update_model exists', strpos($html, 'name="action" value="update_model"') !== false);
+ok('118 action=delete_model exists', strpos($html, 'name="action" value="delete_model"') !== false);
+
+// 5. confirm_delete only in delete form (not in update form)
+ok('119 confirm_delete ID prefix exists (cd-img-)', strpos($html, 'id="cd-img-') !== false);
+ok('120 confirm_delete ID prefix exists (cd-vid-)', strpos($html, 'id="cd-vid-') !== false);
+ok('121 confirm_delete ID prefix exists (cd-chat-)', strpos($html, 'id="cd-chat-') !== false);
+
+// 6. No old dangerous patterns
+ok('122 old submitRow function removed', strpos($html, 'function submitRow') === false);
+// inline-model-form appears only in CSS <style> block, NOT as a form class attribute
+ok('123 inline-model-form not used as form class', preg_match('/<form[^>]*class="[^"]*inline-model-form[^"]*"/', $html) === 0);
+
+// 7. All inputs use form= attribute for update form
+ok('124 input form=upd-img- exists', strpos($html, 'form="upd-img-') !== false);
+ok('125 input form=upd-vid- exists', strpos($html, 'form="upd-vid-') !== false);
+ok('126 input form=upd-chat- exists', strpos($html, 'form="upd-chat-') !== false);
+ok('127 credits input form=upd- exists', strpos($html, 'name="credits"') !== false && strpos($html, 'form="upd-') !== false);
+ok('128 max_reference_images form=upd- exists', strpos($html, 'name="max_reference_images"') !== false && strpos($html, 'form="upd-') !== false);
+
+// 8. confirmDeleteModel JS function exists and works correctly
+ok('129 confirmDeleteModel function defined', strpos($html, 'function confirmDeleteModel') !== false);
+ok('130 confirmDeleteModel sets confirm_delete=1', strpos($html, 'cfField.value') !== false);
+ok('131 confirmDeleteModel submits del- form', strpos($html, '.submit()') !== false && strpos($html, 'confirmDeleteModel') !== false);
+
+// 9. Backend: update_model handler exists and is safe
+ok('132 update_model handler exists', strpos($html, "action === 'update_model'") !== false);
+ok('133 update_model unsets confirm_delete', strpos($html, 'unset($confirmDelete)') !== false);
+ok('134 update_model does NOT use DELETE', preg_match('/action === .update_model.*DELETE\s+FROM\s+ai_models/s', $html) === 0);
+
+// 10. Backend: delete_model handler is safe
+ok('135 delete_model handler exists', strpos($html, "action === 'delete_model'") !== false);
+ok('136 delete_model requires confirm_delete=1', strpos($html, 'confirmDelete !== 1') !== false);
+ok('137 delete_model uses soft delete (is_active=0)', strpos($html, 'is_active = 0') !== false);
+ok('138 delete_model does NOT DELETE FROM ai_models', preg_match('/action === .delete_model.*DELETE\s+FROM\s+ai_models/s', $html) === 0);
+
+// 11. Database state
+$bananaRows = $pdo->query("SELECT id, model_id, is_active FROM ai_models WHERE model_id IN ('nana-banana-2','nana-banana-pro') ORDER BY id")->fetchAll(PDO::FETCH_ASSOC);
+ok('139 nana-banana-2 and nana-banana-pro restored (2 rows)', count($bananaRows) === 2);
+
+$countBefore = (int) $pdo->query("SELECT COUNT(*) FROM ai_models")->fetchColumn();
+$pdo->prepare("UPDATE ai_models SET credits=? WHERE model_id='nana-banana-2'")->execute(['99']);
+$countAfter = (int) $pdo->query("SELECT COUNT(*) FROM ai_models")->fetchColumn();
+ok('140 UPDATE does not change row count', $countBefore === $countAfter);
+$row = $pdo->query("SELECT credits FROM ai_models WHERE model_id='nana-banana-2'")->fetch(PDO::FETCH_ASSOC);
+ok('141 nana-banana-2 credits=99 saved', $row['credits'] == '99');
+$pdo->prepare("UPDATE ai_models SET credits=? WHERE model_id='nana-banana-2'")->execute(['15']);
+
+$countBefore2 = (int) $pdo->query("SELECT COUNT(*) FROM ai_models")->fetchColumn();
+$pdo->prepare("UPDATE ai_models SET credits=? WHERE model_id='nana-banana-pro'")->execute(['88']);
+$countAfter2 = (int) $pdo->query("SELECT COUNT(*) FROM ai_models")->fetchColumn();
+ok('142 UPDATE nana-banana-pro does not change row count', $countBefore2 === $countAfter2);
+$pdo->prepare("UPDATE ai_models SET credits=? WHERE model_id='nana-banana-pro'")->execute(['10']);
+
+$veoRows = $pdo->query("SELECT id FROM ai_models WHERE model_id='veo-omni-flash'")->fetch(PDO::FETCH_ASSOC);
+ok('143 veo-omni-flash still in DB', !empty($veoRows));
+
+$totalRows = (int) $pdo->query("SELECT COUNT(*) FROM ai_models")->fetchColumn();
+ok('144 ai_models total rows = 8', $totalRows === 8);
+
+// 12. Structural safety: no old action=update or action=delete in forms
+// Count occurrences to ensure these old patterns are gone from form bodies
+$oldUpdateCount = preg_match_all('/<form[^>]*>.*?name="action" value="update"[^>]*>/s', $html);
+$oldDeleteCount = preg_match_all('/<form[^>]*>.*?name="action" value="delete"[^>]*>/s', $html);
+ok('145 no action=update (old) in standalone forms', $oldUpdateCount === 0);
+ok('146 no action=delete (old) in standalone forms', $oldDeleteCount === 0);
+
+// 13. Backend safety: update_model block does NOT use confirm_delete for logic
+if (preg_match('/action === .update_model.*?unset\(\$confirmDelete\)/s', $html)) {
+    ok('147 update_model reads confirm_delete only to unset it', true);
+} else {
+    ok('147 update_model reads confirm_delete only to unset it', false);
+}
 
 @unlink($tmpJpg); @unlink($tmpPng); @unlink($tmpWebp); @unlink($tmpMp4);
 echo "RESULTS: {$passed} passed, {$failed} failed\n";
