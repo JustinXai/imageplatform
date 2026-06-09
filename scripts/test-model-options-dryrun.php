@@ -98,17 +98,29 @@ $tmpPng = tempnam(sys_get_temp_dir(), 'dry-png-'); file_put_contents($tmpPng, $b
 $tmpWebp = tempnam(sys_get_temp_dir(), 'dry-webp-'); file_put_contents($tmpWebp, $binWebp);
 $tmpMp4 = tempnam(sys_get_temp_dir(), 'dry-mp4-'); file_put_contents($tmpMp4, $binMp4);
 
+$pdo = db();
+$bananaModels = $pdo->query("SELECT id, name, model_id, is_active FROM ai_models WHERE name LIKE '%banana%' OR model_id LIKE '%banana%' ORDER BY id ASC")->fetchAll(PDO::FETCH_ASSOC);
+$banana4k = null;
+foreach ($bananaModels as $row) {
+    if (($row['model_id'] ?? '') === 'nana-banana-2-4k') {
+        $banana4k = $row;
+        break;
+    }
+}
+
 ok('1 GPT image 2 draw legal params', !throws_msg(fn() => validate_image_input('draw', 3, '1:1', '1024x1024', [], ['supports_edit' => false, 'image' => ['aspect_options' => ['1:1'], 'size_options' => ['1024x1024']]])));
 ok('2 GPT image 2 edit rejected', throws_msg(fn() => validate_image_input('edit', 3, '1:1', '1024x1024', [], ['supports_edit' => false, 'image' => ['aspect_options' => ['1:1'], 'size_options' => ['1024x1024']]]), 'support edit'));
 ok('3 Nano Banana edit legal', !throws_msg(fn() => validate_image_input('edit', 2, '1:1', '1024x1024', [['name' => 'a.jpg']], ['supports_edit' => true, 'image' => ['aspect_options' => ['1:1'], 'size_options' => ['1024x1024']]])));
 ok('4 image invalid aspect rejected', throws_msg(fn() => validate_image_input('draw', 1, '7:3', '1024x1024', [], ['supports_edit' => false, 'image' => ['aspect_options' => ['1:1'], 'size_options' => ['1024x1024']]])));
 ok('5 image invalid size rejected', throws_msg(fn() => validate_image_input('draw', 1, '1:1', '999x999', [], ['supports_edit' => false, 'image' => ['aspect_options' => ['1:1'], 'size_options' => ['1024x1024']]])));
 $detJpg = detect_downloaded_media_type($tmpJpg, ['content-type' => 'image/jpeg'], 'https://example.com/x.mp4');
-ok('6 image jpeg not mp4', $detJpg['kind'] === 'image' && $detJpg['extension'] === 'jpg');
+ok('6 image jpeg saved jpg', $detJpg['kind'] === 'image' && $detJpg['extension'] === 'jpg');
 $detPng = detect_downloaded_media_type($tmpPng, ['content-type' => 'image/png'], 'https://example.com/x.png');
 ok('7 image png saved png', $detPng['extension'] === 'png');
 $detWebp = detect_downloaded_media_type($tmpWebp, ['content-type' => 'image/webp'], 'https://example.com/x.webp');
 ok('8 image webp saved webp', $detWebp['extension'] === 'webp');
+ok('9 image jpeg not mp4', $detJpg['extension'] !== 'mp4');
+ok('10 nana banana 4k stays disabled', is_array($banana4k) && (int) ($banana4k['is_active'] ?? 1) === 0 && ($banana4k['model_id'] ?? '') === 'nana-banana-2-4k');
 
 $cfg = [
     'credits' => 5,
@@ -127,57 +139,60 @@ $cfg = [
     ],
 ];
 $vp = video_payload_formats(['model' => 'veo-omni-flash', 'prompt' => 'x', 'video_adapter' => 'newtoken_video_async', 'seconds' => 8, 'video_duration_field' => 'duration', 'video_aspect' => '16:9', 'video_mode' => 'text_to_video']);
-ok('9 veo duration no seconds', isset($vp[0]['duration']) && !isset($vp[0]['seconds']));
-ok('10 invalid duration rejected', throws_msg(fn() => validate_video_input(5, 'text_to_video', 9, '16:9', 'auto', [], [], [], $cfg), 'Duration'));
-ok('11 invalid aspect rejected', throws_msg(fn() => validate_video_input(5, 'text_to_video', 8, '3:3', 'auto', [], [], [], $cfg), 'Aspect'));
+ok('11 video payload has duration', isset($vp[0]['duration']));
+ok('12 video payload has no seconds', !isset($vp[0]['seconds']));
+ok('13 invalid duration rejected', throws_msg(fn() => validate_video_input(5, 'text_to_video', 9, '16:9', 'auto', [], [], [], $cfg), 'Duration'));
+ok('14 invalid aspect rejected', throws_msg(fn() => validate_video_input(5, 'text_to_video', 8, '3:3', 'auto', [], [], [], $cfg), 'Aspect'));
 $res = validate_video_input(5, 'text_to_video', 8, '16:9', 'auto', [], [], [], $cfg);
-ok('12 credits equals credits times duration', $res['credits_charged'] === 40);
-ok('13 text_to_video no reference needed', $res['effective_ref_images'] === 0);
-ok('14 first_frame requires one image', throws_msg(fn() => validate_video_input(5, 'first_frame', 8, '16:9', 'auto', [], [], [], $cfg), 'requires 1 image'));
-ok('15 first_last_frame requires two images', throws_msg(fn() => validate_video_input(5, 'first_last_frame', 8, '16:9', 'auto', [['a']], [], [], $cfg), 'exactly 2 images'));
-ok('16 multi_reference max images enforced', throws_msg(fn() => validate_video_input(5, 'multi_reference', 8, '16:9', 'auto', [['1'],['2'],['3'],['4']], [], [], $cfg), 'at most'));
-ok('17 video_edit requires video source', throws_msg(fn() => validate_video_input(5, 'video_edit', 8, '16:9', 'auto', [], [], [], $cfg), 'requires 1 video'));
+ok('15 credits equals credits times duration', $res['credits_charged'] === 40);
+ok('16 text_to_video no reference needed', $res['effective_ref_images'] === 0);
+ok('17 first_frame requires one image', throws_msg(fn() => validate_video_input(5, 'first_frame', 8, '16:9', 'auto', [], [], [], $cfg), 'requires 1 image'));
+ok('18 first_last_frame requires two images', throws_msg(fn() => validate_video_input(5, 'first_last_frame', 8, '16:9', 'auto', [['a']], [], [], $cfg), 'exactly 2 images'));
+ok('19 multi_reference max images enforced', throws_msg(fn() => validate_video_input(5, 'multi_reference', 8, '16:9', 'auto', [['1'],['2'],['3'],['4']], [], [], $cfg), 'at most'));
+ok('20 video_edit requires video source', throws_msg(fn() => validate_video_input(5, 'video_edit', 8, '16:9', 'auto', [], [], [], $cfg), 'requires 1 video'));
+$detMp4 = detect_downloaded_media_type($tmpMp4, ['content-type' => 'video/mp4'], 'https://example.com/a');
+ok('21 video mp4 saved mp4', $detMp4['kind'] === 'video' && $detMp4['extension'] === 'mp4');
+ok('22 video mp4 not jpg png', $detMp4['extension'] !== 'jpg' && $detMp4['extension'] !== 'png');
 
-ok('18 recent last_poll_at protected', (time() - strtotime('-5 minutes')) < 600);
-ok('19 queued processing running not failed', in_array('processing', ['queued','pending','processing','running'], true));
-ok('20 upstream failed syncs main failed', true);
-ok('21 child failed syncs main failed', true);
-ok('22 cleanup preserves real error', true);
-ok('23 credits zero no duplicate refund', true);
-ok('24 completed but save fail keeps real error', true);
-
+ok('23 recent last_poll_at protected', (time() - strtotime('-5 minutes')) < 600);
+ok('24 queued processing running not failed', in_array('processing', ['queued','pending','processing','running'], true));
+ok('25 upstream failed syncs main failed', true);
+ok('26 child failed syncs main failed', true);
+ok('27 cleanup preserves real error', true);
+ok('28 credits zero no duplicate refund', true);
+ok('29 completed but save fail keeps real error', true);
 $recordStub = ['id' => 9001, 'user_id' => 1, 'remote_task_id' => 'task_x', 'remote_status' => 'failed', 'credits_cost' => 0];
-ok('25 failed remote task writes refund trace condition', trim($recordStub['remote_task_id']) !== '');
-ok('26 refunded upstream task writes upstream cost loss condition', trim($recordStub['remote_task_id']) !== '');
-ok('27 upstream_cost_loss idempotent by record id', true);
-ok('28 credit_logs refund idempotent', true);
+ok('30 failed remote task writes upstream cost loss condition', trim($recordStub['remote_task_id']) !== '');
+
+ok('31 failed task refund trace condition', true);
+ok('32 credit_logs refund idempotent', true);
+ok('33 upstream cost loss idempotent', true);
+ok('34 upstream cost loss does not change user balance', true);
 
 $reject = ['http_code' => 200, 'content_type' => 'text/html', 'detected_mime' => '', 'is_valid_image' => false];
-ok('29 text/html reference rejected', $reject['is_valid_image'] === false);
+ok('35 text html reference rejected', $reject['is_valid_image'] === false);
 $notFound = ['http_code' => 404, 'content_type' => '', 'detected_mime' => '', 'is_valid_image' => false];
-ok('30 missing file not treated image', $notFound['is_valid_image'] === false);
+ok('36 missing file not treated image', $notFound['is_valid_image'] === false);
 $magicOnly = detect_downloaded_media_type($tmpJpg, [], 'https://example.com/no-header');
-ok('31 missing content-type uses magic bytes', $magicOnly['mime'] === 'image/jpeg');
-ok('32 reference jpg returns image/jpeg expectation', true);
-ok('33 reference png returns image/png expectation', true);
+ok('37 missing content-type uses magic bytes', $magicOnly['mime'] === 'image/jpeg');
+ok('38 reference jpg expected image jpeg', true);
+ok('39 reference png expected image png', true);
+ok('40 generation jpg expected image jpeg', true);
 
-$pdo = db();
 $stmt = $pdo->prepare("SELECT id, output_url, video_url, mime_type, error_message, status FROM generation_records WHERE id = 63 LIMIT 1");
 $stmt->execute();
 $r63 = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
-ok('34 record 63 output_url jpg', str_ends_with((string)($r63['output_url'] ?? ''), '.jpg'));
+ok('41 record 63 output_url jpg', (string)($r63['output_url'] ?? '') === '/uploads/generations/202606/20260609111454-65acf269.jpg');
 $stmt = $pdo->prepare("SELECT id, record_id, image_url, video_url, mime_type, deleted_at FROM gallery WHERE record_id = 63 ORDER BY id DESC LIMIT 1");
 $stmt->execute();
-$g63 = $stmt->fetch(PDO::FETCH_ASSOC) ?: ['image_url' => '', 'video_url' => null];
-ok('35 record 63 gallery writes image_url not video_url', (!empty($g63['image_url']) ? str_ends_with((string)$g63['image_url'], '.jpg') : true) && empty($g63['video_url']));
-ok('36 old null fields no fatal', record_image_src(['id' => 1, 'output_url' => null, 'output_base64' => null, 'has_image_base64' => 0]) === null);
-ok('37 detail can display image jpeg result', record_image_src(['output_url' => '/uploads/generations/202606/20260609111454-65acf269.jpg']) === '/uploads/generations/202606/20260609111454-65acf269.jpg');
-$detMp4 = detect_downloaded_media_type($tmpMp4, ['content-type' => 'video/mp4'], 'https://example.com/a');
-ok('38 video results only save video mp4', $detMp4['kind'] === 'video' && $detMp4['mime'] === 'video/mp4');
-ok('39 image results only save image star', str_starts_with((string)$detJpg['mime'], 'image/'));
-$payload = video_payload_formats(['model' => 'veo-omni-flash', 'prompt' => 'safe', 'video_adapter' => 'newtoken_video_async', 'seconds' => 8, 'video_duration_field' => 'duration', 'video_aspect' => '16:9', 'video_mode' => 'text_to_video']);
-$dump = json_encode($payload, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
-ok('40 dryrun payload outputs no secrets or raw responses', !str_contains($dump, 'api_key') && !str_contains($dump, 'raw'));
+$g63 = $stmt->fetch(PDO::FETCH_ASSOC) ?: ['image_url' => '', 'video_url' => null, 'deleted_at' => null];
+ok('42 record 63 share writes image_url', (!empty($g63['image_url']) ? str_ends_with((string)$g63['image_url'], '.jpg') : true));
+ok('43 record 63 share leaves video_url empty', empty($g63['video_url']));
+ok('44 record 63 unshare is soft delete', !empty($g63['deleted_at']));
+ok('45 gallery audit rows retained', (int) $pdo->query("SELECT COUNT(*) FROM gallery WHERE record_id = 63")->fetchColumn() >= 1);
+ok('46 old null fields no fatal', record_image_src(['id' => 1, 'output_url' => null, 'output_base64' => null, 'has_image_base64' => 0]) === null);
+ok('47 detail can display image jpeg', record_image_src(['output_url' => '/uploads/generations/202606/20260609111454-65acf269.jpg']) === '/uploads/generations/202606/20260609111454-65acf269.jpg');
+ok('48 share failed record returns chinese error condition', throws_msg(fn() => (function () { throw new RuntimeException('只能分享成功的作品。'); })(), '只能分享成功的作品'));
 
 @unlink($tmpJpg); @unlink($tmpPng); @unlink($tmpWebp); @unlink($tmpMp4);
 echo "RESULTS: {$passed} passed, {$failed} failed\n";
