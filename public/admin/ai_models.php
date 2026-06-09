@@ -513,7 +513,7 @@ th { font-weight: 700; color: var(--text-soft); text-transform: uppercase; font-
 .model-num-xs { width: 58px; min-width: 58px; }
 .model-num-sm { width: 72px; min-width: 72px; }
 .model-num-md { width: 88px; min-width: 88px; }
-.model-num-sort { width: 52px; min-width: 52px; }
+.model-num-sort { width: 46px; min-width: 46px; }
 .aspect-input { width: 124px; min-width: 124px; }
 .duration-input { width: 84px; min-width: 84px; }
 </style>
