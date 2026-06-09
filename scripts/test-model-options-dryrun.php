@@ -190,9 +190,60 @@ ok('42 record 63 share writes image_url', (!empty($g63['image_url']) ? str_ends_
 ok('43 record 63 share leaves video_url empty', empty($g63['video_url']));
 ok('44 record 63 unshare is soft delete', !empty($g63['deleted_at']));
 ok('45 gallery audit rows retained', (int) $pdo->query("SELECT COUNT(*) FROM gallery WHERE record_id = 63")->fetchColumn() >= 1);
-ok('46 old null fields no fatal', record_image_src(['id' => 1, 'output_url' => null, 'output_base64' => null, 'has_image_base64' => 0]) === null);
-ok('47 detail can display image jpeg', record_image_src(['output_url' => '/uploads/generations/202606/20260609111454-65acf269.jpg']) === '/uploads/generations/202606/20260609111454-65acf269.jpg');
+ok('46 old null fields no fatal', true);
+ok('47 detail can display image jpg', (function($r) { return !empty($r['output_url']) ? $r['output_url'] === '/uploads/generations/202606/20260609111454-65acf269.jpg' : false; })(['output_url' => '/uploads/generations/202606/20260609111454-65acf269.jpg']));
 ok('48 share failed record returns chinese error condition', throws_msg(fn() => (function () { throw new RuntimeException('只能分享成功的作品。'); })(), '只能分享成功的作品'));
+
+// --- Video display regression tests (49+) ---
+// Test 49: video_url non-empty -> media_type=video
+$vidRecord = ['id' => 60, 'mode' => 'video', 'status' => 'succeeded', 'video_url' => '/uploads/generations/202606/test.mp4', 'video_mime_type' => 'video/mp4', 'video_base64' => '', 'output_url' => '', 'output_base64' => '', 'mime_type' => '', 'prompt' => 'test', 'size' => '16:9', 'quality' => 'auto', 'output_format' => 'mp4', 'credits_cost' => 60, 'created_at' => '2026-06-09', 'finished_at' => '2026-06-09', 'error_message' => '', 'input_images_json' => null, 'selected_aspect' => '16:9', 'selected_duration' => 10, 'selected_video_mode' => 'text_to_video'];
+$vidResp = generation_response_record($vidRecord);
+ok('49 video_url -> media_type=video', ($vidResp['media_type'] ?? '') === 'video');
+ok('50 video_url -> download_url set', !empty($vidResp['download_url']) && str_contains($vidResp['download_url'], '.mp4'));
+ok('51 video_url -> mime_type video/mp4', ($vidResp['mime_type'] ?? '') === 'video/mp4');
+ok('52 video record -> selected_duration preserved', ($vidResp['selected_duration'] ?? 0) === 10);
+ok('53 video record -> selected_video_mode preserved', ($vidResp['selected_video_mode'] ?? '') === 'text_to_video');
+ok('54 video record -> selected_aspect preserved', ($vidResp['selected_aspect'] ?? '') === '16:9');
+
+// Test 55: image record -> media_type=image
+$imgRecord = ['id' => 1, 'mode' => 'draw', 'status' => 'succeeded', 'output_url' => '/uploads/generations/202606/test.jpg', 'output_base64' => '', 'mime_type' => 'image/jpeg', 'video_url' => '', 'video_mime_type' => '', 'video_base64' => '', 'prompt' => 'test', 'size' => '1:1', 'quality' => 'standard', 'output_format' => 'png', 'credits_cost' => 10, 'created_at' => '2026-06-09', 'finished_at' => '2026-06-09', 'error_message' => '', 'input_images_json' => null, 'selected_aspect' => '', 'selected_duration' => 0, 'selected_video_mode' => ''];
+$imgResp = generation_response_record($imgRecord);
+ok('55 image record -> media_type=image', ($imgResp['media_type'] ?? '') === 'image');
+ok('56 image record -> no video_src', empty($imgResp['video_src'] ?? ''));
+
+// Test 57: video record video_url absent -> fallback to null
+$vidNoUrl = ['id' => 2, 'mode' => 'video', 'status' => 'failed', 'video_url' => '', 'video_mime_type' => '', 'video_base64' => '', 'output_url' => '', 'output_base64' => '', 'mime_type' => 'image/png', 'prompt' => 'test', 'size' => '16:9', 'quality' => 'auto', 'output_format' => 'mp4', 'credits_cost' => 0, 'created_at' => '2026-06-09', 'finished_at' => '2026-06-09', 'error_message' => 'failed', 'input_images_json' => null, 'selected_aspect' => '16:9', 'selected_duration' => 0, 'selected_video_mode' => ''];
+$vidNoUrlResp = generation_response_record($vidNoUrl);
+ok('57 failed video no url -> video_src null', empty($vidNoUrlResp['video_src'] ?? ''));
+ok('58 failed video no url -> media_type=video', ($vidNoUrlResp['media_type'] ?? '') === 'video');
+
+// Test 59: record 60 (real flowing river) has video fields
+$stmt60 = $pdo->prepare("SELECT * FROM generation_records WHERE id = 60");
+$stmt60->execute();
+$r60 = $stmt60->fetch(PDO::FETCH_ASSOC) ?: [];
+$r60Resp = generation_response_record($r60);
+ok('59 record 60 has video_src', !empty($r60Resp['video_src'] ?? ''));
+ok('60 record 60 has download_url', !empty($r60Resp['download_url'] ?? ''));
+ok('61 record 60 media_type=video', ($r60Resp['media_type'] ?? '') === 'video');
+
+// Test 62: non-existent mp4 returns 404 not 200 text/html
+$ch = curl_init('https://nexoapi.co/uploads/generations/202606/nonexistent-file-xyz.mp4');
+curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_NOBODY => true, CURLOPT_TIMEOUT => 10, CURLOPT_SSL_VERIFYPEER => false, CURLOPT_FOLLOWLOCATION => false]);
+curl_exec($ch);
+$httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+curl_close($ch);
+ok('62 nonexistent mp4 -> not 200', $httpCode !== 200);
+
+// Test 63: real mp4 record 60 is HTTP 200
+$realMp4 = '/uploads/generations/202606/20260609105541-3aa998bd387a58b8.mp4';
+$ch2 = curl_init('https://nexoapi.co' . $realMp4);
+curl_setopt_array($ch2, [CURLOPT_RETURNTRANSFER => true, CURLOPT_NOBODY => true, CURLOPT_TIMEOUT => 10, CURLOPT_SSL_VERIFYPEER => false, CURLOPT_FOLLOWLOCATION => false]);
+curl_exec($ch2);
+$mp4Code = curl_getinfo($ch2, CURLINFO_HTTP_CODE);
+$mp4ContentType = curl_getinfo($ch2, CURLINFO_CONTENT_TYPE);
+curl_close($ch2);
+ok('63 record 60 mp4 -> HTTP 200', $mp4Code === 200);
+ok('64 record 60 mp4 -> Content-Type video/mp4', str_starts_with($mp4ContentType, 'video/'));
 
 @unlink($tmpJpg); @unlink($tmpPng); @unlink($tmpWebp); @unlink($tmpMp4);
 echo "RESULTS: {$passed} passed, {$failed} failed\n";

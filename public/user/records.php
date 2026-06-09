@@ -83,8 +83,6 @@ render_header('生成记录', 'records');
 
             <div class="grid-3" id="historyList">
                 <?php foreach ($records as $record): ?>
-                    <?php $src = record_image_src($record); ?>
-                    <?php $inputImageCount = generation_input_image_count($record); ?>
                     <?php
                     $statusClass = match ((string) $record['status']) {
                         'succeeded' => 'succeeded',
@@ -108,18 +106,42 @@ render_header('生成记录', 'records');
                         data-created="<?= e($record['created_at']) ?>"
                         data-finished="<?= e($record['finished_at'] ?: '-') ?>"
                         data-error="<?= e($record['error_message'] ?: '') ?>"
-                        data-input-count="<?= $inputImageCount ?>"
+                        data-input-count="<?= (is_array(@json_decode((string)($record['input_images_json']??''), true)) ? count(@json_decode((string)($record['input_images_json']??''), true)) : 0) ?>"
                     >
-                        <?php if ($src): ?>
-                            <img src="<?= e($src) ?>" alt="生成图片">
-                        <?php else: ?>
-                            <div style="display:grid;place-items:center;aspect-ratio:1;background:var(--main-surface-soft);color:var(--text-muted);font-weight:700;"><?= e(generation_status_label((string) $record['status'])) ?></div>
-                        <?php endif; ?>
+<?php
+                                    $recIsVideo2 = ($record['mode'] ?? 'draw') === 'video';
+                                    $vSrc2 = $recIsVideo2 && !empty($record['video_url']) ? htmlspecialchars($record['video_url']) : '';
+                                    $iSrc2 = !$recIsVideo2 && !empty($record['output_url']) ? htmlspecialchars($record['output_url']) : '';
+                                    ?>
+                                    <?php if ($recIsVideo2 && $vSrc2): ?>
+                                        <video src="<?= e($vSrc2) ?>" controls></video>
+                                    <?php elseif ($iSrc2): ?>
+                                        <img src="<?= e($iSrc2) ?>" alt="生成图片">
+                                    <?php else: ?>
+                                        <div style="display:grid;place-items:center;aspect-ratio:1;background:var(--main-surface-soft);color:var(--text-muted);font-weight:700;"><?= e(generation_status_label((string) $record['status'])) ?></div>
+                                    <?php endif; ?>
                         <div class="media-card-body">
                             <div class="prompt"><?= e($record['prompt']) ?></div>
                             <div class="meta">
                                 <span class="status-badge <?= $statusClass ?>"><?= e(generation_status_label((string) $record['status'])) ?></span>
-                                <span><?= e(mode_display_label((string) ($record['mode'] ?? 'draw'))) ?> / <?= e($record['size']) ?> / <?= e($record['quality']) ?></span>
+                                <span><?php
+                                    $lblMode = $record['mode'] ?? 'draw';
+                                    $lblVideoMode = trim((string)($record['selected_video_mode'] ?? ''));
+                                    $VMODES = ['text_to_video'=>'文生视频','first_frame'=>'首帧','first_last_frame'=>'首尾帧','multi_reference'=>'多帧','video_edit'=>'视频编辑'];
+                                    $lblVideoModeStr = $lblVideoMode !== '' ? ($VMODES[$lblVideoMode] ?? $lblVideoMode) : '';
+                                    if ($lblMode === 'video') { $lblStr = $lblVideoModeStr ?: '视频'; }
+                                    elseif ($lblMode === 'edit') { $lblStr = '编辑'; }
+                                    else { $lblStr = '绘画'; }
+                                    $lblSize = htmlspecialchars($record['size'] ?? 'auto');
+                                    $lblAspect = trim((string)($record['selected_aspect'] ?? ''));
+                                    $lblDuration = (int)($record['selected_duration'] ?? 0);
+                                    $lblDurStr = $lblDuration ? $lblDuration . '秒' : '';
+                                    $lblParts = [$lblStr];
+                                    if ($lblAspect && $lblAspect !== 'auto') $lblParts[] = $lblAspect;
+                                    $lblParts[] = $lblSize;
+                                    if ($lblDurStr) $lblParts[] = $lblDurStr;
+                                    ?>
+                                    <?= implode(' / ', array_map('htmlspecialchars', $lblParts)) ?></span>
                                 <time><?= e($record['created_at']) ?></time>
                                 <form method="post" action="/delete_record" style="display:inline;margin-left:auto;" onsubmit="return confirm('确认删除这条生成记录？')">
                                     <?= csrf_field() ?>

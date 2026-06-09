@@ -20,11 +20,12 @@ $stmt = db()->prepare(
     "SELECT id, user_id, status, mode, model, prompt, size, quality, output_format,
             input_images_json,
             output_url, mime_type, credits_cost, error_message, started_at, finished_at,
-            deleted_at, created_at, output_base64 IS NOT NULL AS has_image_base64
+            deleted_at, created_at, output_base64 IS NOT NULL AS has_image_base64,
+            video_url, video_mime_type, selected_duration, selected_video_mode, selected_aspect
      FROM generation_records
-     WHERE user_id = ? AND deleted_at IS NULL AND (mode IS NULL OR mode != 'video')
+     WHERE user_id = ? AND deleted_at IS NULL
      ORDER BY created_at DESC
-     LIMIT 5"
+     LIMIT 10"
 );
 $stmt->execute([$user['id']]);
 $records = $stmt->fetchAll();
@@ -213,15 +214,34 @@ render_header('图片生成器', 'app');
                         <div class="history-empty-inline" style="grid-column:1/-1;">暂无生成记录，开始你的第一次创作吧</div>
                     <?php endif; ?>
                     <?php foreach ($records as $record): ?>
-                        <?php $src = record_image_src($record); ?>
-                        <?php $videoSrc = generation_record_video_src($record); ?>
-                        <?php $inputImageCount = generation_input_image_count($record); ?>
                         <?php $isVideo = ($record['mode'] ?? 'draw') === 'video'; ?>
-                        <article class="media-card" tabindex="0" data-record-id="<?= (int) $record['id'] ?>" data-status="<?= e($record['status']) ?>" data-mode="<?= e($record['mode'] ?? 'draw') ?>" data-prompt="<?= e($record['prompt']) ?>" data-size="<?= e($record['size']) ?>" data-quality="<?= e($record['quality']) ?>" data-format="<?= e($record['output_format']) ?>" data-credits="<?= (int) ($record['credits_cost'] ?? 0) ?>" data-created="<?= e($record['created_at']) ?>" data-finished="<?= e($record['finished_at'] ?: '-') ?>" data-error="<?= e($record['error_message'] ?: '') ?>" data-input-count="<?= $inputImageCount ?>" style="cursor:pointer;">
+                        <?php $recDuration = (int) ($record['selected_duration'] ?? 0); ?>
+                        <?php $recVideoMode = trim((string) ($record['selected_video_mode'] ?? '')); ?>
+                        <?php $videoSrc = ($isVideo && !empty($record['video_url'])) ? htmlspecialchars($record['video_url']) : ''; ?>
+                        <?php $imageSrc = (!$isVideo && !empty($record['output_url'])) ? htmlspecialchars($record['output_url']) : ''; ?>
+                        <article class="media-card" tabindex="0"
+                            data-record-id="<?= (int) $record['id'] ?>"
+                            data-status="<?= e($record['status']) ?>"
+                            data-mode="<?= e($record['mode'] ?? 'draw') ?>"
+                            data-prompt="<?= e($record['prompt']) ?>"
+                            data-size="<?= e($record['size'] ?? 'auto') ?>"
+                            data-quality="<?= e($record['quality'] ?? 'auto') ?>"
+                            data-format="<?= e($record['output_format'] ?? 'png') ?>"
+                            data-credits="<?= (int) ($record['credits_cost'] ?? 0) ?>"
+                            data-created="<?= e($record['created_at']) ?>"
+                            data-finished="<?= e($record['finished_at'] ?: '-') ?>"
+                            data-error="<?= e($record['error_message'] ?: '') ?>"
+                            data-input-count="<?= (is_array(json_decode((string) ($record['input_images_json'] ?? ''), true)) ? count(json_decode((string) ($record['input_images_json'] ?? ''), true)) : 0) ?>"
+                            data-video-src="<?= e($videoSrc) ?>"
+                            data-image-src="<?= e($imageSrc) ?>"
+                            data-selected-duration="<?= $recDuration ?>"
+                            data-selected-video-mode="<?= e($recVideoMode) ?>"
+                            data-selected-aspect="<?= e($record['selected_aspect'] ?? '') ?>"
+                            style="cursor:pointer;">
                             <?php if ($isVideo && $videoSrc): ?>
                                 <video src="<?= e($videoSrc) ?>" controls></video>
-                            <?php elseif ($src): ?>
-                                <img src="<?= e($src) ?>" alt="生成图片">
+                            <?php elseif ($imageSrc): ?>
+                                <img src="<?= e($imageSrc) ?>" alt="生成图片">
                             <?php else: ?>
                                 <div style="width:100%;aspect-ratio:1;display:grid;place-items:center;background:var(--main-surface-soft);color:var(--text-muted);font-weight:700;font-size:13px;">
                                     <span class="status-badge <?= e($record['status']) ?>"><?= e(generation_status_label((string) $record['status'])) ?></span>
@@ -229,9 +249,27 @@ render_header('图片生成器', 'app');
                             <?php endif; ?>
                             <div class="media-card-body">
                                 <div class="prompt"><?= e($record['prompt']) ?></div>
+                                <?php
+                                    $VIDEO_MODE_LABELS = ['text_to_video'=>'文生视频','first_frame'=>'首帧','first_last_frame'=>'首尾帧','multi_reference'=>'多帧','video_edit'=>'视频编辑'];
+                                    $cardMode = $record['mode'] ?? 'draw';
+                                    $cardVideoMode = trim((string)($record['selected_video_mode'] ?? ''));
+                                    $cardVideoModeLabel = $cardVideoMode !== '' ? ($VIDEO_MODE_LABELS[$cardVideoMode] ?? $cardVideoMode) : '';
+                                    if ($cardMode === 'video') {
+                                        $cardModeStr = $cardVideoModeLabel ?: '视频';
+                                    } else {
+                                        $cardModeStr = ($cardMode === 'edit') ? '编辑' : '绘画';
+                                    }
+                                    $cardSize = htmlspecialchars($record['size'] ?? 'auto');
+                                    $cardAspect = htmlspecialchars($record['selected_aspect'] ?? '');
+                                    $cardDuration = $recDuration ? $recDuration . '秒' : '';
+                                    $metaParts = [$cardModeStr];
+                                    if ($cardAspect && $cardAspect !== 'auto') $metaParts[] = $cardAspect;
+                                    $metaParts[] = $cardSize;
+                                    if ($cardDuration) $metaParts[] = $cardDuration;
+                                ?>
                                 <div class="meta">
                                     <span class="status-badge <?= e($record['status']) ?>"><?= e(generation_status_label((string) $record['status'])) ?></span>
-                                    <span><?= e(mode_display_label((string) ($record['mode'] ?? 'draw'))) ?> / <?= e($record['size']) ?> / <?= e($isVideo ? ($record['output_format'] ?: 'mp4') : $record['quality']) ?></span>
+                                    <span><?= implode(' / ', array_map('htmlspecialchars', $metaParts)) ?></span>
                                 </div>
                                 <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px;">
                                     <time style="font-size:10px;color:var(--text-muted);"><?= e($record['created_at']) ?></time>

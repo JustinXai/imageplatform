@@ -148,6 +148,11 @@ const createRecordCard = (record) => {
   article.dataset.finished = record.finished_at || "-";
   article.dataset.error = record.error_message || "";
   article.dataset.inputCount = record.input_image_count || 0;
+  article.dataset.videoSrc = record.video_src || record.download_url || "";
+  article.dataset.imageSrc = record.image_src || "";
+  article.dataset.selectedDuration = record.selected_duration || "";
+  article.dataset.selectedVideoMode = record.selected_video_mode || "";
+  article.dataset.selectedAspect = record.selected_aspect || "";
   article.style.cursor = "pointer";
 
   // Build display label for record mode
@@ -531,7 +536,23 @@ const openRecordDialog = (card) => {
   const st = (sel, val) => { const el = d.querySelector(sel); if (el) el.textContent = val; };
   st("[data-dialog-prompt]", card.dataset.prompt || "");
   st("[data-dialog-status]", statusText(card.dataset.status) || "-");
-  st("[data-dialog-params]", `${card.dataset.mode === "edit" ? "编辑" : "绘画"} / ${card.dataset.size}`);
+  // Build params label
+  const recMode = card.dataset.mode || "draw";
+  const recDuration = card.dataset.selectedDuration || "";
+  const recVideoMode = card.dataset.selectedVideoMode || "";
+  const videoModeLabels = { 'text_to_video': '文生视频', 'first_frame': '首帧', 'first_last_frame': '首尾帧', 'multi_reference': '多帧', 'video_edit': '视频编辑' };
+  const recVideoModeLabel = videoModeLabels[recVideoMode] || "";
+  let paramsLabel;
+  if (recMode === "video") {
+    const parts = [recVideoModeLabel || "视频"];
+    const sz = card.dataset.size || "auto";
+    if (sz && sz !== "auto") parts.push(sz);
+    if (recDuration) parts.push(recDuration + "秒");
+    paramsLabel = parts.join(" / ");
+  } else {
+    paramsLabel = (recMode === "edit" ? "编辑" : "绘画") + " / " + (card.dataset.size || "auto");
+  }
+  st("[data-dialog-params]", paramsLabel);
   st("[data-dialog-credits]", card.dataset.credits || "0");
   st("[data-dialog-time]", `创建 ${card.dataset.created}`);
   const errEl = d.querySelector("[data-dialog-error]");
@@ -542,11 +563,48 @@ const openRecordDialog = (card) => {
   }
   const imgSec = d.querySelector("[data-dialog-images]");
   if (imgSec) {
-    const img = card.querySelector("img");
-    const vid = card.querySelector("video");
     imgSec.innerHTML = "";
-    if (vid) { const c = vid.cloneNode(true); c.removeAttribute("style"); c.style.cssText = "max-width:100%;max-height:300px;"; imgSec.appendChild(c); }
-    else if (img) { const c = img.cloneNode(); c.style.cssText = "max-width:100%;max-height:300px;cursor:pointer;"; imgSec.appendChild(c); }
+    const recMode = card.dataset.mode || "draw";
+    const videoSrc = card.dataset.videoSrc || card.querySelector("video")?.src || "";
+    const imageSrc = card.dataset.imageSrc || card.querySelector("img")?.src || "";
+    const isSucceeded = card.dataset.status === "succeeded";
+
+    if (recMode === "video" && videoSrc) {
+      imgSec.innerHTML = `
+        <div class="record-media record-media-video">
+          <video controls preload="metadata" playsinline style="width:100%;max-height:420px;border-radius:12px;background:#000;">
+            <source src="${escapeHtml(videoSrc)}" type="video/mp4">
+            当前浏览器不支持视频播放。
+          </video>
+        </div>`;
+      if (isSucceeded && (card.dataset.videoSrc || card.querySelector("video"))) {
+        const vidUrl = card.dataset.videoSrc || card.querySelector("video")?.src || "";
+        if (vidUrl) {
+          const foot = d.querySelector(".record-dialog-foot");
+          if (foot) {
+            const dl = document.createElement("a");
+            dl.className = "btn btn-secondary btn-sm";
+            dl.href = vidUrl;
+            dl.download = "";
+            dl.textContent = "下载视频";
+            dl.style.cssText = "display:inline-flex;align-items:center;";
+            const openBtn = document.createElement("a");
+            openBtn.className = "btn btn-secondary btn-sm";
+            openBtn.href = vidUrl;
+            openBtn.target = "_blank";
+            openBtn.rel = "noopener noreferrer";
+            openBtn.textContent = "新窗口打开";
+            openBtn.style.cssText = "display:inline-flex;align-items:center;";
+            foot.insertBefore(dl, foot.querySelector("[data-share-gallery]"));
+            foot.insertBefore(openBtn, foot.querySelector("[data-share-gallery]"));
+          }
+        }
+      }
+    } else if (imageSrc) {
+      const img = card.querySelector("img");
+      if (img) { const c = img.cloneNode(); c.style.cssText = "max-width:100%;max-height:300px;cursor:pointer;"; imgSec.appendChild(c); }
+      else { const c = document.createElement("img"); c.src = imageSrc; c.style.cssText = "max-width:100%;max-height:300px;cursor:pointer;"; imgSec.appendChild(c); }
+    }
   }
   const delForm = d.querySelector(".record-dialog-foot form");
   if (delForm) { delForm.querySelector('[name="record_id"]').value = card.dataset.recordId; }
@@ -612,7 +670,12 @@ const showResultDialog = (record) => {
       created: record.created_at || "",
       finished: record.finished_at || "-",
       error: record.error_message || "",
-      inputCount: record.input_image_count || 0
+      inputCount: record.input_image_count || 0,
+      videoSrc: record.video_src || record.download_url || "",
+      imageSrc: record.image_src || "",
+      selectedDuration: record.selected_duration || "",
+      selectedVideoMode: record.selected_video_mode || "",
+      selectedAspect: record.selected_aspect || "",
     },
     querySelector: () => null // no image/video element in the proxy
   };
