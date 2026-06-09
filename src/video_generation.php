@@ -3,6 +3,22 @@
 declare(strict_types=1);
 
 /**
+ * Exception thrown when a video generation task is queued and awaiting polling.
+ */
+class VideoTaskQueuedException extends Exception
+{
+    public string $taskId;
+    public string $taskStatus;
+
+    public function __construct(string $taskId, string $taskStatus)
+    {
+        parent::__construct("Video task queued: {$taskId} ({$taskStatus})");
+        $this->taskId = $taskId;
+        $this->taskStatus = $taskStatus;
+    }
+}
+
+/**
  * 视频生成模块
  *
  * 与 image_generation.php 平级，处理视频生成相关的 API 调用与记录更新。
@@ -575,10 +591,10 @@ function save_video_task_record(int $recordId, array $data): void
     $recordStatus = video_record_status_from_task($status);
     $stmt = $pdo->prepare(
         'UPDATE generation_records
-            SET status = ?, video_task_id = ?, video_task_status = ?, video_task_response = ?, updated_at = NOW()
+            SET status = ?, remote_task_id = ?, remote_status = ?, video_task_id = ?, video_task_status = ?, video_task_response = ?, last_poll_at = NOW(), updated_at = NOW()
             WHERE id = ?'
     );
-    $stmt->execute([$recordStatus, $taskId, $status, json_encode($data, JSON_UNESCAPED_UNICODE), $recordId]);
+    $stmt->execute([$recordStatus, $taskId, $status, $taskId, $status, json_encode($data, JSON_UNESCAPED_UNICODE), $recordId]);
     Logger::info('视频异步任务已保存', [
         'record_id' => $recordId,
         'task_id' => $taskId,
@@ -601,10 +617,15 @@ function save_video_task_record(int $recordId, array $data): void
  */
 function store_video_generation_data(int $recordId, array $data, array $record): void
 {
-    // 异步任务格式（含 id + status，不含 data）→ 保存任务信息，由轮询更新最终结果
+    // DEBUG
+    error_log("DEBUG store_video_generation_data: video_api_response_is_task=" . (video_api_response_is_task($data) ? 'true' : 'false'));
+    // 异步任务格式（含 id + status，不含 data）→ 保存任务信息，开始轮询
     if (video_api_response_is_task($data)) {
         save_video_task_record($recordId, $data);
-        return;
+        $taskId = video_task_id($data);
+        $taskStatus = (string) ($data['status'] ?? '');
+        error_log("DEBUG: throwing VideoTaskQueuedException taskId=$taskId status=$taskStatus");
+        throw new VideoTaskQueuedException($taskId, $taskStatus);
     }
 
     // 同步格式：优先从标准 data[0] 提取
@@ -917,9 +938,64 @@ function poll_video_task(string $baseUrl, string $apiKey, string $taskId, int $r
  */
 function download_video_task_result(string $baseUrl, string $apiKey, string $taskId, int $recordId, array $taskData): void
 {
-    $url = rtrim($baseUrl, '/') . '/v1/videos/' . $taskId . '/content';
+    // 优先使用 poll 响应中已有的 video_url（newtoken.club 直接返回 CDN URL）
+    $videoUrl = $taskData['video_url'] ?? $taskData['url'] ?? '';
+    if (is_string($videoUrl) && $videoUrl !== '' && filter_var($videoUrl, FILTER_VALIDATE_URL)) {
+        Logger::info('下载视频任务结果（使用响应URL）', ['task_id' => $taskId, 'url' => $videoUrl]);
 
-    Logger::info('下载视频任务结果', ['task_id' => $taskId, 'url' => $url]);
+        $ch = curl_init($videoUrl);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS => 5,
+            CURLOPT_CONNECTTIMEOUT => 30,
+            CURLOPT_TIMEOUT        => 300,
+            CURLOPT_SSL_VERIFYPEER => ssl_verify_enabled(),
+            CURLOPT_SSL_VERIFYHOST => ssl_verify_enabled() ? 2 : 0,
+            CURLOPT_USERAGENT => 'AI-Image-Generator/1.0',
+        ]);
+        $raw = curl_exec($ch);
+        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $contentType = (string) curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+        $error = curl_error($ch);
+        curl_close($ch);
+
+        if (($raw === false || $raw === '') && $error !== '') {
+            Logger::info('响应URL下载失败，尝试/content端点', ['error' => $error]);
+        } elseif ($httpCode === 200 && $raw !== false && $raw !== '') {
+            $tmpFile = tempnam(sys_get_temp_dir(), 'video-media-');
+            if ($tmpFile === false) {
+                throw new RuntimeException('上游完成，但结果下载/保存失败：无法创建临时文件。');
+            }
+            file_put_contents($tmpFile, $raw, LOCK_EX);
+            try {
+                $detected = detect_downloaded_media_type($tmpFile, ['content-type' => $contentType], $videoUrl);
+                if (($detected['kind'] ?? '') !== 'video' || ($detected['extension'] ?? '') === '') {
+                    throw new RuntimeException('上游完成，但结果下载/保存失败：结果不是有效视频。');
+                }
+                $relativePath = save_downloaded_media_file($raw, $detected, 'generations');
+            } finally {
+                @unlink($tmpFile);
+            }
+            $mime = (string) $detected['mime'];
+            $pdo = db();
+            $stmt = $pdo->prepare(
+                "UPDATE generation_records
+                 SET status = 'succeeded', video_url = ?, video_mime_type = ?, remote_status = ?,
+                     video_task_response = ?, finished_at = NOW(), error_message = NULL
+                 WHERE id = ?"
+            );
+            $stmt->execute([$relativePath, $mime, (string) ($taskData['status'] ?? 'completed'), json_encode($taskData, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), $recordId]);
+            Logger::info('视频任务结果已保存（响应URL）', ['record_id' => $recordId, 'path' => $relativePath, 'mime' => $mime]);
+            return;
+        } else {
+            Logger::info('响应URL下载失败，尝试/content端点', ['http_code' => $httpCode, 'content_length' => strlen((string) $raw)]);
+        }
+    }
+
+    // 兜底：使用 /v1/videos/{taskId}/content 端点
+    $url = rtrim($baseUrl, '/') . '/v1/videos/' . $taskId . '/content';
+    Logger::info('下载视频任务结果（/content端点）', ['task_id' => $taskId, 'url' => $url]);
 
     $ch = curl_init($url);
     curl_setopt_array($ch, [
@@ -930,7 +1006,6 @@ function download_video_task_result(string $baseUrl, string $apiKey, string $tas
         CURLOPT_SSL_VERIFYPEER => ssl_verify_enabled(),
         CURLOPT_SSL_VERIFYHOST => ssl_verify_enabled() ? 2 : 0,
     ]);
-
     $raw      = curl_exec($ch);
     $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $contentType = (string) curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
@@ -945,40 +1020,39 @@ function download_video_task_result(string $baseUrl, string $apiKey, string $tas
         throw new RuntimeException('下载视频失败，HTTP ' . $httpCode . '：' . substr(strip_tags((string) $raw), 0, 200));
     }
 
-    // 保存视频文件
-    $format = (strpos($contentType, 'webm') !== false) ? 'webm' : 'mp4';
-    $relativePath = api_save_binary_file($raw, $format, 'videos');
+    $tmpFile = tempnam(sys_get_temp_dir(), 'video-media-');
+    if ($tmpFile === false) {
+        throw new RuntimeException('上游完成，但结果下载/保存失败：无法创建临时文件。');
+    }
+    file_put_contents($tmpFile, $raw, LOCK_EX);
+    try {
+        $detected = detect_downloaded_media_type($tmpFile, ['content-type' => $contentType], $url);
+        if (($detected['kind'] ?? '') !== 'video' || ($detected['extension'] ?? '') === '') {
+            throw new RuntimeException('上游完成，但结果下载/保存失败：结果不是有效视频。');
+        }
+        $relativePath = save_downloaded_media_file($raw, $detected, 'generations');
+    } finally {
+        @unlink($tmpFile);
+    }
 
     // 更新数据库记录
     $pdo = db();
     $stmt = $pdo->prepare(
         "UPDATE generation_records
             SET status = 'succeeded', video_url = ?, video_mime_type = ?, video_base64 = NULL,
-                video_task_id = NULL, video_task_status = 'succeeded', video_task_response = ?, finished_at = NOW(), error_message = NULL
+                remote_status = ?, video_task_id = NULL, video_task_status = 'succeeded', video_task_response = ?, finished_at = NOW(), error_message = NULL
             WHERE id = ?"
     );
     $stmt->execute([
         $relativePath,
-        'video/' . $format,
+        (string) $detected['mime'],
+        (string) ($taskData['status'] ?? 'completed'),
         json_encode($taskData, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
         $recordId,
     ]);
 
-    Logger::info('视频任务结果已保存', ['record_id' => $recordId, 'path' => $relativePath]);
+    Logger::info('视频任务结果已保存', ['record_id' => $recordId, 'path' => $relativePath, 'mime' => $detected['mime']]);
 }
-
-// ============================================================================
-// 主执行函数
-// ============================================================================
-
-/**
- * 执行视频生成记录
- *
- * @param  int     $recordId 记录 ID
- * @param  int|null $timeout 超时秒数
- * @return array   更新后的生成记录
- * @throws Throwable
- */
 function perform_video_generation_record(int $recordId, ?int $timeout = null): array
 {
     ensure_generation_records_video_columns();
@@ -987,13 +1061,12 @@ function perform_video_generation_record(int $recordId, ?int $timeout = null): a
     $record  = generation_record_by_id($recordId);
     $timeout = $timeout ?? max(60, (int) config('generation.timeout', 600));
 
-    // 优先使用配置快照（创建时抄存的配置），但仍用实时 api_key
     $config = resolve_video_generation_config($record);
     $config = apply_generation_config_snapshot($record, $config);
     $record['model'] = $config['model'];
     $record['invoke_mode'] = $config['invoke_mode'];
+    $record['video_adapter'] = $config['video_adapter'] ?? '';
 
-    // 鍒涓嶇敤绠 admin 鍚庡惎鍔ㄧ殑閰嶇疆锛岀敤浠诲姟鍒涘紝当时的閰嶇疆
     if (!empty($config['fixed_seconds'])) {
         $record['seconds'] = $config['fixed_seconds'];
     }
@@ -1026,22 +1099,23 @@ function perform_video_generation_record(int $recordId, ?int $timeout = null): a
                 throw new RuntimeException('视频接口返回错误：' . $apiError);
             }
 
-            // 先存储数据（可能是异步任务，只保存任务 ID）
-            store_video_generation_data($recordId, $data, $record);
-
-            // 如果是异步任务，开始轮询
-            if (video_api_response_is_task($data)) {
-                $taskId = video_task_id($data);
-                if ($taskId !== '') {
-                    Logger::info('开始轮询视频任务', ['task_id' => $taskId]);
-                    poll_video_task($config['base_url'], $config['api_key'], $taskId, $recordId, $timeout);
-                }
+            try {
+                store_video_generation_data($recordId, $data, $record);
+            } catch (VideoTaskQueuedException $qe) {
+                poll_video_task($config['base_url'], $config['api_key'], $qe->taskId, $recordId, $timeout);
+                return generation_record_by_id($recordId);
+            } catch (Throwable $e) {
+                throw $e;
             }
-        }
 
-        return generation_record_by_id($recordId);
+            return generation_record_by_id($recordId);
+        }
+    } catch (VideoTaskQueuedException $qe) {
+        throw $qe;
     } catch (Throwable $e) {
         refund_generation_failure($pdo, $recordId, $e->getMessage(), 'VIDEO_RECOVERY_FAILED');
         throw $e;
     }
+
+    return generation_record_by_id($recordId);
 }

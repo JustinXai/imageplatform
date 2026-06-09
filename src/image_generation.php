@@ -1,9 +1,24 @@
 <?php
 
 
+class ImageEditTaskQueuedException extends Exception
+{
+    public string $taskId;
+    public string $submitData;
+    public string $baseUrl;
+    public string $apiKey;
+    public int $recordId;
 
-declare(strict_types=1);
-
+    public function __construct(string $taskId, string $submitData, string $baseUrl, string $apiKey, int $recordId)
+    {
+        parent::__construct("Image edit task queued: {$taskId}");
+        $this->taskId = $taskId;
+        $this->submitData = $submitData;
+        $this->baseUrl = $baseUrl;
+        $this->apiKey = $apiKey;
+        $this->recordId = $recordId;
+    }
+}
 
 
 require_once __DIR__ . '/api_client.php';
@@ -1774,6 +1789,8 @@ function image_edit_result_item(array $data): ?array
     $candidates = [
         $data['data']['images'][0] ?? null,
         $data['images'][0] ?? null,
+        $data['video_url'] ?? null,
+        $data['data']['video_url'] ?? null,
         ['url' => $data['url'] ?? null],
         ['url' => $data['image_url'] ?? null],
         ['url' => $data['output_url'] ?? null],
@@ -1817,6 +1834,97 @@ function image_edit_task_is_failed(string $status): bool
     return in_array($status, ['failed','error','cancelled','canceled','expired'], true);
 }
 
+function detect_binary_media_mime_from_string(string $binary): string
+{
+    if ($binary === '') {
+        return '';
+    }
+
+    if (strncmp($binary, "\xFF\xD8\xFF", 3) === 0) {
+        return 'image/jpeg';
+    }
+    if (strncmp($binary, "\x89PNG", 4) === 0) {
+        return 'image/png';
+    }
+    if (strlen($binary) >= 12 && substr($binary, 0, 4) === 'RIFF' && substr($binary, 8, 4) === 'WEBP') {
+        return 'image/webp';
+    }
+    if (strlen($binary) >= 8 && substr($binary, 4, 4) === 'ftyp') {
+        return 'video/mp4';
+    }
+
+    return '';
+}
+
+function detect_downloaded_media_type(string $tmpFile, array $responseHeaders = [], string $url = ''): array
+{
+    $headerMime = '';
+    foreach ($responseHeaders as $key => $value) {
+        if (is_string($key) && strtolower($key) === 'content-type') {
+            $headerMime = strtolower(trim(explode(';', (string) $value)[0] ?? ''));
+            break;
+        }
+    }
+
+    $finfoMime = '';
+    if (is_file($tmpFile)) {
+        if (function_exists('finfo_open')) {
+            $finfo = finfo_open(FILEINFO_MIME_TYPE);
+            if ($finfo) {
+                $finfoMime = (string) finfo_file($finfo, $tmpFile);
+                finfo_close($finfo);
+            }
+        }
+        if ($finfoMime === '' && function_exists('mime_content_type')) {
+            $finfoMime = (string) @mime_content_type($tmpFile);
+        }
+    }
+
+    $magicMime = '';
+    $prefix = is_file($tmpFile) ? (string) @file_get_contents($tmpFile, false, null, 0, 64) : '';
+    if ($prefix !== '') {
+        $magicMime = detect_binary_media_mime_from_string($prefix);
+    }
+
+    $candidates = [$headerMime, $finfoMime, $magicMime];
+    $mime = '';
+    foreach ($candidates as $candidate) {
+        $candidate = strtolower(trim((string) $candidate));
+        if ($candidate !== '' && $candidate !== 'application/octet-stream' && $candidate !== 'text/html') {
+            $mime = $candidate;
+            break;
+        }
+    }
+
+    $extensionMap = [
+        'image/jpeg' => 'jpg',
+        'image/png' => 'png',
+        'image/webp' => 'webp',
+        'video/mp4' => 'mp4',
+        'video/webm' => 'webm',
+    ];
+
+    return [
+        'mime' => $mime,
+        'extension' => $extensionMap[$mime] ?? '',
+        'kind' => str_starts_with($mime, 'video/') ? 'video' : (str_starts_with($mime, 'image/') ? 'image' : 'unknown'),
+        'header_mime' => $headerMime,
+        'finfo_mime' => $finfoMime,
+        'magic_mime' => $magicMime,
+        'url' => $url,
+    ];
+}
+
+function save_downloaded_media_file(string $binary, array $detected, string $bucket = 'generations'): string
+{
+    $extension = (string) ($detected['extension'] ?? '');
+    if ($extension === '') {
+        throw new RuntimeException('上游完成，但结果下载/保存失败：无法识别媒体类型。');
+    }
+
+    return api_save_binary_file($binary, $extension, $bucket);
+}
+
 function image_reference_urls_from_record(array $record): array
 {
     $images = json_decode((string) ($record['input_images_json'] ?? ''), true);
@@ -1845,13 +1953,10 @@ function image_reference_urls_from_record(array $record): array
         $relativePath = api_save_binary_file($content, $fmt, 'reference');
         $publicUrl = rtrim((string) config('app.base_url', ''), '/') . $relativePath;
         $head = remote_file_head($publicUrl, 20);
-        if (($head['http_code'] ?? 0) !== 200) {
-            throw new RuntimeException('参考图公网地址不可访问，请稍后重试。');
+        if (!($head['is_valid_image'] ?? false)) {
+            throw new RuntimeException('参考图公网地址不可访问或类型错误。');
         }
-        $ct = strtolower((string) ($head['content_type'] ?? ''));
-                if ($ct !== '' && !preg_match('#^image/(png|jpeg|webp)#i', $ct)) {
-            throw new RuntimeException('参考图公网类型不受支持。');
-        }
+        $ct = strtolower((string) (($head['content_type'] ?: $head['detected_mime'] ?? '') ?? ''));
         Logger::info('IMAGE_EDIT_REFERENCE_URL_READY', [
             'record_id' => $record['id'] ?? 0,
             'url' => $publicUrl,
@@ -1874,13 +1979,49 @@ function remote_file_head(string $url, int $timeout = 20): array
         CURLOPT_TIMEOUT => $timeout,
         CURLOPT_CONNECTTIMEOUT => min(10, $timeout),
         CURLOPT_HEADER => false,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS => 3,
     ]);
     curl_exec($ch);
     $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $contentType = (string) curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
     $err = curl_error($ch);
     curl_close($ch);
-    return ['http_code' => $httpCode, 'content_type' => $contentType, 'error' => $err];
+
+    $contentType = strtolower(trim(explode(';', $contentType)[0] ?? ''));
+    $allowed = ['image/png', 'image/jpeg', 'image/webp'];
+    $byMagic = '';
+
+    if ($httpCode === 200 && ($contentType === '' || $contentType === 'text/html')) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => $timeout,
+            CURLOPT_CONNECTTIMEOUT => min(10, $timeout),
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS => 3,
+            CURLOPT_RANGE => '0-511',
+        ]);
+        $body = curl_exec($ch);
+        if (is_string($body) && $body !== '') {
+            $byMagic = detect_binary_media_mime_from_string($body);
+        }
+        $rangeErr = curl_error($ch);
+        curl_close($ch);
+        if ($err === '' && $rangeErr !== '') {
+            $err = $rangeErr;
+        }
+    }
+
+    $isImage = in_array($contentType, $allowed, true) || in_array($byMagic, $allowed, true);
+
+    return [
+        'http_code' => $httpCode,
+        'content_type' => $contentType,
+        'detected_mime' => $byMagic,
+        'is_valid_image' => $httpCode === 200 && $isImage,
+        'error' => $err,
+    ];
 }
 
 function call_newtoken_async_reference_edit_api_submit(string $baseUrl, string $apiKey, array $record, int $timeout = 60): array
@@ -1936,7 +2077,18 @@ function call_newtoken_async_reference_edit_api_submit(string $baseUrl, string $
         Logger::warning('IMAGE_EDIT_TASK_ID_MISSING', ['record_id' => $record['id'] ?? 0, 'keys' => array_keys($data)]);
         throw new RuntimeException('上游已响应，但未返回任务 ID。');
     }
-    return ['task_id' => $taskId, 'submit_data' => $data];
+    // 保存异步任务信息到记录
+    $recordId = (int) ($record['id'] ?? 0);
+    if ($recordId > 0) {
+        $pdo = db();
+        $stmt = $pdo->prepare(
+            "UPDATE generation_records
+             SET remote_task_id = ?, remote_status = ?, edit_task_id = ?, edit_task_status = ?, edit_task_response = ?, status = 'running', last_poll_at = NOW(), updated_at = NOW()
+             WHERE id = ?"
+        );
+        $stmt->execute([$taskId, 'queued', $taskId, 'queued', json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), $recordId]);
+    }
+    throw new ImageEditTaskQueuedException($taskId, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), $baseUrl, $apiKey, $recordId);
 }
 
 /**
@@ -1951,12 +2103,27 @@ function call_newtoken_async_reference_edit_api_submit(string $baseUrl, string $
  */
 function poll_image_edit_task(string $baseUrl, string $apiKey, string $taskId, int $recordId, int $deadline = 1800, int $httpTimeout = 60): void
 {
-    $editPollEndpoint = trim((string) config('image.edit_poll_endpoint', '/v1/videos/{task_id}'));
+    // 优先从记录的配置快照中读取轮询配置
+    $snapshot = [];
+    $recStmt = db()->prepare('SELECT generation_config_snapshot FROM generation_records WHERE id = ? LIMIT 1');
+    $recStmt->execute([$recordId]);
+    $rec = $recStmt->fetch();
+    if (is_array($rec) && !empty($rec['generation_config_snapshot'])) {
+        $snapshot = @json_decode((string) $rec['generation_config_snapshot'], true) ?: [];
+    }
+
+    $editPollEndpoint = trim((string) ($snapshot['edit_poll_endpoint'] ?? config('image.edit_poll_endpoint', '/v1/videos/{task_id}')));
+    $authType = strtolower(trim((string) ($snapshot['auth_type'] ?? config('image.auth_type', 'bearer'))));
+    if ($baseUrl === '') {
+        $baseUrl = trim((string) ($snapshot['base_url'] ?? config('image.base_url', '')));
+    }
+    if ($apiKey === '') {
+        $apiKey = trim((string) ($snapshot['api_key'] ?? config('image.api_key', '')));
+    }
     $pollUrlTemplate = safe_join_api_url($baseUrl, $editPollEndpoint);
     $pollUrl = str_replace('{task_id}', rawurlencode($taskId), $pollUrlTemplate);
     $startTime = time();
     $interval = 10;
-    $authType = strtolower(trim((string) config('image.auth_type', 'bearer')));
     $headers = ['Accept: application/json'];
     if ($authType === 'x-api-key') {
         $headers[] = 'x-api-key: ' . $apiKey;
@@ -1992,9 +2159,17 @@ function poll_image_edit_task(string $baseUrl, string $apiKey, string $taskId, i
             continue;
         }
         $status = image_edit_task_status($pollData);
+        $remoteStatus = $status;
+        $responseSummary = json_encode([
+            'task_id' => $taskId,
+            'status' => $status,
+            'error' => api_error_message($pollData, ''),
+            'has_video_url' => !empty($pollData['video_url']),
+            'has_url' => !empty($pollData['url']),
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         $pdo = db();
-        $stmt = $pdo->prepare("UPDATE generation_records SET edit_task_id = ?, edit_task_status = ?, edit_task_response = ?, updated_at = NOW() WHERE id = ?");
-        $stmt->execute([$taskId, $status, json_encode($pollData, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), $recordId]);
+        $stmt = $pdo->prepare("UPDATE generation_records SET remote_status = ?, edit_task_id = ?, edit_task_status = ?, edit_task_response = ?, last_poll_at = NOW(), updated_at = NOW() WHERE id = ?");
+        $stmt->execute([$remoteStatus, $taskId, $status, $responseSummary, $recordId]);
         Logger::info('IMAGE_EDIT_POLL_STATUS', [
             'task_id' => $taskId,
             'status' => $status,
@@ -2006,6 +2181,8 @@ function poll_image_edit_task(string $baseUrl, string $apiKey, string $taskId, i
         }
         if (image_edit_task_is_failed($status)) {
             $msg = api_error_message($pollData, '上游任务执行失败');
+            $stmt = $pdo->prepare("UPDATE generation_records SET status = 'failed', credits_cost = 0, error_message = ?, finished_at = NOW(), updated_at = NOW() WHERE id = ?");
+            $stmt->execute(['上游任务失败：' . $msg, $recordId]);
             throw new RuntimeException('上游任务失败：' . $msg);
         }
         if (image_edit_task_is_success($status)) {
@@ -2037,19 +2214,117 @@ function retrieve_image_edit_task_result(int $recordId): array
     if (!is_array($data)) {
         throw new RuntimeException('图片编辑任务结果解析失败。');
     }
-    $item = image_edit_result_item($data);
-    if (!is_array($item)) {
-        throw new RuntimeException('任务已完成，但未返回图片结果。');
-    }
-    return [
-        'raw' => json_encode(['data' => [$item], 'task_id' => $row['edit_task_id'] ?? '', 'status' => $row['edit_task_status'] ?? ''], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-        'http_code' => 200,
-        'content_type' => 'application/json',
-        'error' => '',
-    ];
+    // 返回原始 poll 响应数据，由调用方决定如何存储
+    // Nano Banana (newtoken_async_reference) 返回 {task_id, status, video_url, ...}
+    return $data;
 }
 
 
+
+
+/**
+ * 存储 Nano Banana 编辑结果（视频 URL 模式）。
+ * newtoken_async_reference 返回 {task_id, status, video_url, ...}
+ * 其中 video_url 是可直接访问的 CDN URL。
+ */
+function store_nano_banana_video_result(int $recordId, array $pollData, array $record): void
+{
+    $videoUrl = $pollData['video_url'] ?? $pollData['url'] ?? null;
+
+    if (!is_string($videoUrl) || $videoUrl === '' || !filter_var($videoUrl, FILTER_VALIDATE_URL)) {
+        $status = $pollData['status'] ?? 'unknown';
+        Logger::warning('NANO_BANANA_NO_VIDEO_URL', ['record_id' => $recordId, 'status' => $status, 'keys' => array_keys($pollData)]);
+        throw new RuntimeException("Nano Banana 任务已完成（status={$status}），但未返回结果 URL。");
+    }
+
+    $saved = save_nano_banana_video_file($videoUrl, $recordId);
+    $publicUrl = (string) ($saved['path'] ?? '');
+    $mime = (string) ($saved['mime'] ?? '');
+    $kind = (string) ($saved['kind'] ?? 'unknown');
+
+    $pdo = db();
+    if ($kind === 'video') {
+        $stmt = $pdo->prepare(
+            "UPDATE generation_records
+             SET status = 'succeeded', output_url = NULL, output_base64 = NULL, mime_type = NULL,
+                 video_url = ?, video_mime_type = ?, remote_status = ?, edit_task_status = 'completed',
+                 finished_at = NOW(), error_message = NULL, updated_at = NOW()
+             WHERE id = ?"
+        );
+        $stmt->execute([$publicUrl, $mime, (string) ($pollData['status'] ?? 'completed'), $recordId]);
+    } else {
+        $stmt = $pdo->prepare(
+            "UPDATE generation_records
+             SET status = 'succeeded', output_url = ?, output_base64 = NULL, mime_type = ?,
+                 video_url = NULL, video_mime_type = NULL, remote_status = ?, edit_task_status = 'completed',
+                 finished_at = NOW(), error_message = NULL, updated_at = NOW()
+             WHERE id = ?"
+        );
+        $stmt->execute([$publicUrl, $mime, (string) ($pollData['status'] ?? 'completed'), $recordId]);
+    }
+
+    Logger::info('NANO_BANANA_RESULT_STORED', [
+        'record_id' => $recordId,
+        'source_url' => $videoUrl,
+        'local_path' => $publicUrl,
+        'mime' => $mime,
+        'kind' => $kind,
+    ]);
+}
+
+function save_nano_banana_video_file(string $videoUrl, int $recordId): ?array
+{
+    $context = stream_context_create([
+        'http' => [
+            'method' => 'GET',
+            'timeout' => 60,
+            'follow_location' => true,
+            'user_agent' => 'Mozilla/5.0 (compatible; ImagePlatform/1.0)',
+        ],
+    ]);
+
+    $raw = @file_get_contents($videoUrl, false, $context);
+    if ($raw === false || strlen((string) $raw) < 32) {
+        $error = error_get_last()['message'] ?? 'download failed';
+        Logger::warning('NANO_BANANA_VIDEO_DOWNLOAD_FAILED', [
+            'record_id' => $recordId,
+            'video_url' => $videoUrl,
+            'size' => $raw === false ? 0 : strlen((string) $raw),
+            'error' => $error,
+        ]);
+        throw new RuntimeException('上游完成，但结果下载/保存失败：下载结果文件失败。');
+    }
+
+    $headers = [];
+    foreach (($http_response_header ?? []) as $line) {
+        if (strpos($line, ':') !== false) {
+            [$name, $value] = explode(':', $line, 2);
+            $headers[strtolower(trim($name))] = trim($value);
+        }
+    }
+
+    $tmpFile = tempnam(sys_get_temp_dir(), 'nb-media-');
+    if ($tmpFile === false) {
+        throw new RuntimeException('上游完成，但结果下载/保存失败：无法创建临时文件。');
+    }
+
+    file_put_contents($tmpFile, $raw, LOCK_EX);
+    try {
+        $detected = detect_downloaded_media_type($tmpFile, $headers, $videoUrl);
+        if (($detected['kind'] ?? 'unknown') === 'unknown' || ($detected['extension'] ?? '') === '') {
+            throw new RuntimeException('上游完成，但结果下载/保存失败：无法识别结果媒体类型。');
+        }
+
+        $relativePath = save_downloaded_media_file($raw, $detected, 'generations');
+        return [
+            'path' => $relativePath,
+            'mime' => (string) $detected['mime'],
+            'kind' => (string) $detected['kind'],
+        ];
+    } finally {
+        @unlink($tmpFile);
+    }
+}
 
 function generation_response_excerpt(string $raw): string
 
@@ -2331,6 +2606,8 @@ function call_image_api(string $baseUrl, string $apiKey, array $record, int $tim
 
     $invokeMode = normalize_image_invoke_mode($record['invoke_mode'] ?? 'relay');
 
+    Logger::info('CALL_IMAGE_API', ['mode' => $mode, 'isEdit' => $isEdit, 'invokeMode' => $invokeMode, 'edit_adapter' => ($record['edit_adapter'] ?? 'N/A')]);
+
     if ($invokeMode === 'curl') {
         return $isEdit
             ? call_image_edit_api_curl_mode($baseUrl, $apiKey, $record, $timeout)
@@ -2340,6 +2617,7 @@ function call_image_api(string $baseUrl, string $apiKey, array $record, int $tim
     // 编辑模式：根据 edit_adapter 分流
     if ($isEdit) {
         $editAdapter = trim((string) ($record['edit_adapter'] ?? ''));
+        Logger::info('CALL_IMAGE_API_EDIT', ['editAdapter' => $editAdapter]);
         if ($editAdapter === 'newtoken_async_reference') {
             $submitResult = call_newtoken_async_reference_edit_api_submit($baseUrl, $apiKey, $record, $timeout);
             return [
@@ -2788,18 +3066,11 @@ function image_payload_formats(array $record): array
 
 
 
-    // 鏍煎紡2锛歮essages + response_format锛堥儴鍒?chat 绔偣鏀寔锛?
-
+    // Format 2: messages format (chat endpoint, no response_format)
     $formats[] = [
-
         'model'           => $model,
-
         'messages'        => [['role' => 'user', 'content' => $prompt]],
-
         'n'               => 1,
-
-        'response_format' => $fmt,
-
     ];
 
 
@@ -4358,18 +4629,16 @@ function perform_generation_record(int $recordId, ?int $timeout = null): array
     $record['invoke_mode'] = $config['invoke_mode'];
     $record['edit_adapter'] = $config['edit_adapter'] ?? 'none';
     $record['edit_image_field'] = $config['edit_image_field'] ?? 'image_urls';
+    $record['edit_endpoint'] = $config['edit_endpoint'] ?? '/v1/videos';
+    $record['auth_type'] = $config['auth_type'] ?? 'bearer';
 
 
-
-    // 缁熶竴璋冪敤 /images/generations锛坉raw/edit 鍧囪蛋姝よ矾寰勶級
-
+    // 统一调用 /images/generations（draw/edit 都走这条路）
     try {
 
         $apiResponse = call_image_api($config['base_url'], $config['api_key'], $record, $timeout);
 
         $data = image_api_decode_response($apiResponse);
-
-
 
         $apiError = image_api_error_message($data, '');
 
@@ -4380,11 +4649,35 @@ function perform_generation_record(int $recordId, ?int $timeout = null): array
         }
 
 
-
         store_image_generation_data($recordId, $data, $record);
 
         return generation_record_by_id($recordId);
-
+    } catch (ImageEditTaskQueuedException $qe) {
+        // newtoken_async_reference 模式：任务已排队，开始轮询
+        Logger::info('NANO_BANANA_POLL_START', [
+            'task_id' => $qe->taskId,
+            'record_id' => $qe->recordId,
+            'base_url' => $qe->baseUrl,
+        ]);
+        try {
+            poll_image_edit_task($qe->baseUrl, $qe->apiKey, $qe->taskId, $qe->recordId, $timeout);
+        } catch (RuntimeException $pollEx) {
+            // 轮询失败（超时或任务失败）：更新记录状态为 failed
+            $pdo2 = db();
+            $errMsg = $pollEx->getMessage();
+            $stmtFail = $pdo2->prepare(
+                "UPDATE generation_records
+                 SET status = 'failed', error_message = ?, updated_at = NOW()
+                 WHERE id = ? AND status = 'running'"
+            );
+            $stmtFail->execute([$errMsg, $qe->recordId]);
+            throw $pollEx;
+        }
+        // 轮询完成后，从记录中获取结果
+        $result = retrieve_image_edit_task_result($qe->recordId);
+        Logger::info('NANO_BANANA_RETRIEVE', ['record_id' => $qe->recordId, 'result_keys' => array_keys($result)]);
+        store_nano_banana_video_result($qe->recordId, $result, $record);
+        return generation_record_by_id($qe->recordId);
     } catch (Throwable $e) {
 
         refund_generation_failure($pdo, $recordId, $e->getMessage(), 'RECOVERY_FAILED');
@@ -4412,6 +4705,74 @@ function perform_generation_record(int $recordId, ?int $timeout = null): array
  * @param  string $logKey   Logger 鏍囪瘑閿?
 
  */
+
+function record_generation_refund_log(PDO $pdo, array $record, int $refundAmount, string $message): void
+{
+    if ($refundAmount < 0) {
+        $refundAmount = 0;
+    }
+
+    $recordId = (int) ($record['id'] ?? 0);
+    $userId = (int) ($record['user_id'] ?? 0);
+    if ($recordId < 1 || $userId < 1) {
+        return;
+    }
+
+    $check = $pdo->prepare("SELECT id FROM credit_logs WHERE ref_type = 'generation_record_refund' AND ref_id = ? LIMIT 1");
+    $check->execute([(string) $recordId]);
+    if ($check->fetch()) {
+        return;
+    }
+
+    $balanceStmt = $pdo->prepare('SELECT credits FROM users WHERE id = ? LIMIT 1');
+    $balanceStmt->execute([$userId]);
+    $balanceAfter = (int) $balanceStmt->fetchColumn();
+    $balanceBefore = $balanceAfter - $refundAmount;
+
+    $insert = $pdo->prepare(
+        'INSERT INTO credit_logs (user_id, amount, balance_before, balance_after, type, source, ref_type, ref_id, admin_id, reason, ip_address, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NOW())'
+    );
+    $insert->execute([
+        $userId,
+        $refundAmount,
+        $balanceBefore,
+        $balanceAfter,
+        'refund',
+        'generation_failure',
+        'generation_record_refund',
+        (string) $recordId,
+        mb_substr('生成失败退款：' . $message, 0, 255, 'UTF-8'),
+        '127.0.0.1',
+    ]);
+}
+
+function record_upstream_cost_loss(PDO $pdo, array $record, string $message): void
+{
+    ensure_credit_tables();
+
+    $recordId = (int) ($record['id'] ?? 0);
+    $userId = (int) ($record['user_id'] ?? 0);
+    $remoteTaskId = trim((string) ($record['remote_task_id'] ?? ''));
+    if ($recordId < 1 || $userId < 1 || $remoteTaskId === '') {
+        return;
+    }
+
+    $stmt = $pdo->prepare(
+        'INSERT INTO upstream_cost_logs (record_id, user_id, provider, remote_task_id, remote_status, credits_refunded, note, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
+         ON DUPLICATE KEY UPDATE remote_status = VALUES(remote_status), credits_refunded = VALUES(credits_refunded), note = VALUES(note)'
+    );
+    $stmt->execute([
+        $recordId,
+        $userId,
+        'newtoken',
+        $remoteTaskId,
+        (string) ($record['remote_status'] ?? ''),
+        (int) ($record['credits_cost'] ?? 0),
+        mb_substr($message, 0, 255, 'UTF-8'),
+    ]);
+}
 
 function refund_generation_failure(PDO $pdo, int $recordId, string $errorMsg, string $logKey = 'RECOVERY_FAILED'): void
 
@@ -4452,6 +4813,13 @@ function refund_generation_failure(PDO $pdo, int $recordId, string $errorMsg, st
         );
 
         $stmt->execute([$errorMsg, $recordId]);
+        $latest['credits_cost'] = 0;
+        $latest['remote_status'] = (string) ($latest['remote_status'] ?? '');
+
+        record_generation_refund_log($recoveryPdo, $latest, $charged, $errorMsg);
+        if (trim((string) ($latest['remote_task_id'] ?? '')) !== '') {
+            record_upstream_cost_loss($recoveryPdo, $latest, $errorMsg);
+        }
 
         $recoveryPdo->commit();
 
@@ -4913,6 +5281,7 @@ function fail_generation_record_with_refund(int $recordId, string $message): boo
         }
 
         $charged = (int) $record['credits_cost'];
+        $refundAmount = $charged;
 
         if ($charged > 0) {
 
@@ -4935,6 +5304,12 @@ function fail_generation_record_with_refund(int $recordId, string $message): boo
         );
 
         $stmt->execute([$message, $recordId]);
+
+        $record['credits_cost'] = 0;
+        record_generation_refund_log($pdo, $record, $refundAmount, $message);
+        if (trim((string) ($record['remote_task_id'] ?? '')) !== '') {
+            record_upstream_cost_loss($pdo, $record, $message);
+        }
 
         $pdo->commit();
 
@@ -4981,7 +5356,7 @@ function cleanup_stale_running_generation_records(): int
     $stmt = $pdo->prepare(
         "SELECT id, mode, ai_model_id
          FROM generation_records
-         WHERE status = 'running'
+         WHERE status IN ('running', 'processing')
            AND deleted_at IS NULL
          ORDER BY started_at ASC
          LIMIT 50"
@@ -4995,7 +5370,7 @@ function cleanup_stale_running_generation_records(): int
     $ids = array_column($candidates, 'id');
     $placeholders = implode(',', array_fill(0, count($ids), '?'));
     $remoteStmt = $pdo->prepare(
-        "SELECT id, remote_task_id, last_poll_at, mode, ai_model_id
+        "SELECT id, remote_task_id, remote_status, last_poll_at, mode, ai_model_id
          FROM generation_records
          WHERE id IN ($placeholders)"
     );
@@ -5039,6 +5414,14 @@ function cleanup_stale_running_generation_records(): int
             }
         }
 
+        $remoteStatus = strtolower(trim((string) ($remote['remote_status'] ?? '')));
+        if ($isAsyncTask && in_array($remoteStatus, ['queued', 'pending', 'processing', 'running'], true)) {
+            $lastPoll = !empty($remote['last_poll_at']) ? strtotime((string) $remote['last_poll_at']) : 0;
+            if ($lastPoll && (time() - $lastPoll) < 600) {
+                continue;
+            }
+        }
+
         if ($isAsyncTask) {
             $staleSeconds = ($mode === 'video') ? $asyncVideoStaleAfter : $asyncImageStaleAfter;
         } else {
@@ -5046,9 +5429,9 @@ function cleanup_stale_running_generation_records(): int
         }
 
         $stmtCheck = $pdo->prepare(
-            "SELECT TIMESTAMPDIFF(SECOND, started_at, NOW()) AS elapsed
+            "SELECT TIMESTAMPDIFF(SECOND, COALESCE(last_poll_at, started_at), NOW()) AS elapsed
              FROM generation_records
-             WHERE id = ? AND status = 'running' AND deleted_at IS NULL"
+             WHERE id = ? AND status IN ('running', 'processing') AND deleted_at IS NULL"
         );
         $stmtCheck->execute([$id]);
         $elapsedRow = $stmtCheck->fetch();

@@ -755,6 +755,27 @@ function ensure_credit_tables(): void
         ");
     }
 
+    $stmt = $pdo->query("SHOW TABLES LIKE 'upstream_cost_logs'");
+    if (!$stmt->fetch()) {
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS `upstream_cost_logs` (
+              `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+              `record_id` BIGINT UNSIGNED NOT NULL,
+              `user_id` BIGINT UNSIGNED NOT NULL,
+              `provider` VARCHAR(64) NOT NULL DEFAULT 'newtoken',
+              `remote_task_id` VARCHAR(191) DEFAULT NULL,
+              `remote_status` VARCHAR(64) DEFAULT NULL,
+              `credits_refunded` INT NOT NULL DEFAULT 0,
+              `note` VARCHAR(255) DEFAULT NULL,
+              `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY (`id`),
+              UNIQUE KEY `uniq_upstream_cost_record` (`record_id`),
+              KEY `idx_upstream_cost_user` (`user_id`),
+              KEY `idx_upstream_cost_remote_task` (`remote_task_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+    }
+
     $checked = true;
 }
 
