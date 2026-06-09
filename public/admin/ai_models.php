@@ -46,11 +46,15 @@ function safe_json_implode(?string $json): string
     return implode(',', decode_json($json));
 }
 
-function normalize_credit_input($raw, bool $allowNull = false): ?string
+function normalize_credit_input($raw, bool $allowNull = false, ?string $current = null): ?string
 {
     $value = trim((string) $raw);
     if ($value === '') {
         if ($allowNull) {
+            if ($current !== null && trim((string) $current) !== '') {
+                $cur = trim((string) $current);
+                if (preg_match('/^\d+(?:\.\d+)?$/', $cur)) return $cur;
+            }
             return null;
         }
         throw new InvalidArgumentException('点数字段不能为空。');
@@ -88,13 +92,21 @@ function normalize_sort_input($raw): int
     return normalize_int_input($raw, '排序', 0, 999999, 0);
 }
 
-function normalize_aspect_options(string $raw): array
+function normalize_aspect_options(string $raw, ?string $currentJson = null): array
 {
     $allowed = ['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '21:9'];
-    $options = parse_csv_options($raw);
-    if (count($options) === 0) {
-        return ['auto', '16:9', '9:16'];
+    $raw = trim($raw);
+    // If input is empty and we have a current JSON value, try to reuse it
+    if ($raw === '' && $currentJson !== null && trim($currentJson) !== '') {
+        $parsed = parse_csv_options(safe_json_implode($currentJson));
+        if (count($parsed) > 0) {
+            $allValid = true;
+            foreach ($parsed as $p) { if (!in_array($p, $allowed, true)) { $allValid = false; break; } }
+            if ($allValid) return $parsed;
+        }
     }
+    $options = parse_csv_options($raw);
+    if (count($options) === 0) { return ['auto', '16:9', '9:16']; }
     foreach ($options as $option) {
         if (!in_array($option, $allowed, true)) {
             throw new InvalidArgumentException('比例选项只允许 auto、1:1、16:9、9:16、4:3、3:4、21:9。');
@@ -103,8 +115,22 @@ function normalize_aspect_options(string $raw): array
     return $options;
 }
 
-function normalize_duration_options(string $raw): array
+function normalize_duration_options(string $raw, ?string $currentJson = null): array
 {
+    $raw = trim($raw);
+    // If input is empty and we have a current JSON value, try to reuse it
+    if ($raw === '' && $currentJson !== null && trim($currentJson) !== '') {
+        $parsed = parse_csv_options(safe_json_implode($currentJson));
+        if (count($parsed) > 0) {
+            $allValid = true;
+            foreach ($parsed as $p) {
+                if (!preg_match('/^\d+$/', $p)) { $allValid = false; break; }
+                $v = (int) $p;
+                if ($v < 1 || $v > 120) { $allValid = false; break; }
+            }
+            if ($allValid) return $parsed;
+        }
+    }
     $options = parse_csv_options($raw);
     if (count($options) === 0) {
         throw new InvalidArgumentException('可选时长不能为空。');
@@ -327,7 +353,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ? (strtolower(trim((string) ($_POST['invoke_mode'] ?? ($existing['invoke_mode'] ?? 'relay')))) === 'kaiyuncode' ? 'kaiyuncode' : 'relay')
                 : (strtolower(trim((string) ($_POST['invoke_mode'] ?? ($existing['invoke_mode'] ?? 'relay')))) === 'curl' ? 'curl' : 'relay');
 
-            $credits = normalize_credit_input($_POST['credits'] ?? ($existing['credits'] ?? ''), false);
+            $credits = normalize_credit_input($_POST['credits'] ?? ($existing['credits'] ?? ''), false, $existing['credits'] ?? null);
             $supportsEdit = (int) ($_POST['supports_edit'] ?? ($existing['supports_edit'] ?? 0));
             $editAdapterRaw = strtolower(trim((string) ($_POST['edit_adapter'] ?? ($existing['edit_adapter'] ?? 'none'))));
             $editAdapter = in_array($editAdapterRaw, ['none','nano_banana_image_urls','openai_edits_multipart','newtoken_async_reference'], true)
@@ -341,19 +367,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $videoAdapter = in_array(strtolower(trim((string) ($_POST['video_adapter'] ?? ($existing['video_adapter'] ?? 'none')))), ['none','kaiyuncode','newtoken_video_async'], true)
                 ? strtolower(trim((string) ($_POST['video_adapter'] ?? ($existing['video_adapter'] ?? 'none')))) : 'none';
 
-            $imgAspList = normalize_aspect_options((string) ($_POST['image_aspect_options'] ?? safe_json_implode($existing['image_aspect_options_json'] ?? null)));
+            $imgAspList = normalize_aspect_options((string) ($_POST['image_aspect_options'] ?? safe_json_implode($existing['image_aspect_options_json'] ?? null)), $existing['image_aspect_options_json'] ?? null);
             $imgAspOpts = encode_json_or_null($imgAspList);
             $imgDefAsp = resolve_hidden_scalar($_POST, 'image_default_aspect', $existing['image_default_aspect'] ?? 'auto', 'auto');
             $imgSzOpts = resolve_hidden_json_csv($_POST, 'image_size_options', $existing['image_size_options_json'] ?? null, ['auto']);
             $imgDefSz = resolve_hidden_scalar($_POST, 'image_default_size', $existing['image_default_size'] ?? 'auto', 'auto');
 
-            $vidDurList = normalize_duration_options((string) ($_POST['video_duration_options'] ?? safe_json_implode($existing['video_duration_options_json'] ?? null)));
+            $vidDurList = normalize_duration_options((string) ($_POST['video_duration_options'] ?? safe_json_implode($existing['video_duration_options_json'] ?? null)), $existing['video_duration_options_json'] ?? null);
             $vidDurOpts = encode_json_or_null($vidDurList);
             $vidDefDur = ensure_default_duration_in_options(
                 normalize_int_input($_POST['video_default_duration'] ?? ($existing['video_default_duration'] ?? ''), '默认时长', 1, 120),
                 $vidDurList
             );
-            $vidAspList = normalize_aspect_options((string) ($_POST['video_aspect_options'] ?? safe_json_implode($existing['video_aspect_options_json'] ?? null)));
+            $vidAspList = normalize_aspect_options((string) ($_POST['video_aspect_options'] ?? safe_json_implode($existing['video_aspect_options_json'] ?? null)), $existing['video_aspect_options_json'] ?? null);
             $vidAspOpts = encode_json_or_null($vidAspList);
             $vidDefAsp = trim((string) ($_POST['video_default_aspect'] ?? ($existing['video_default_aspect'] ?? '16:9')));
             if (!in_array($vidDefAsp, $vidAspList, true)) {
