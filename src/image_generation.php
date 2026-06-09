@@ -2806,7 +2806,7 @@ function image_payload_formats(array $record): array
 
     // 鏍煎紡3锛歱rompt 鏍煎紡锛堥€傜敤浜?/images/generations 绔偣锛?
 
-    $p1 = ['model' => $model, 'prompt' => $prompt, 'size' => $size, 'n' => 1, 'response_format' => $fmt];
+    $p1 = ['model' => $model, 'prompt' => $prompt, 'size' => $size, 'n' => 1];
 
     if ($quality !== '') {
 

@@ -181,6 +181,25 @@ function call_video_generation_api(string $baseUrl, string $apiKey, array $recor
         throw new RuntimeException('API Key 为空，请检查视频模型配置。');
     }
 
+    $adapter = trim((string) ($record['video_adapter'] ?? ''));
+
+    // newtoken_video_async 必须走 /v1/videos，单一 payload，无重试
+    if ($adapter === 'newtoken_video_async') {
+        $payloads = video_payload_formats($record);
+        $payload = $payloads[0] ?? null;
+        if ($payload === null) {
+            throw new RuntimeException('newtoken_video_async 模型未能构建有效 payload。');
+        }
+        $url = api_build_url($baseUrl, 'v1/videos');
+        Logger::info('视频API请求[newtoken_async]', [
+            'url' => $url,
+            'payload_keys' => array_keys($payload),
+            'full_payload' => json_encode($payload, JSON_UNESCAPED_UNICODE),
+        ]);
+        return api_curl_post_json($url, $apiKey, $payload, $timeout);
+    }
+
+    // relay / kaiyuncode: 原有逻辑，遍历多个 endpoint
     $url = api_build_url_from_setting($baseUrl, 'video_generate_path', 'v1/chat/completions');
     $payloads = video_payload_formats($record);
     $lastError = '';
