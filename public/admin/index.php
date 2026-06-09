@@ -3,6 +3,7 @@
 require_once __DIR__ . '/../../src/bootstrap.php';
 require_once __DIR__ . '/../../src/layout.php';
 require_once __DIR__ . '/../../src/image_generation.php';
+require_once __DIR__ . '/../../src/generation_record_view_helpers.php';
 
 require_admin();
 ensure_generation_records_soft_delete();
@@ -104,7 +105,7 @@ render_admin_nav('index');
         <div class="record-grid" id="adminRecordGrid">
             <?php foreach ($records as $r): ?>
                 <?php
-                $src = record_image_src($r);
+                $src = generation_record_image_src($r);
                 $isDeleted = !empty($r['deleted_at']);
                 $modeIcon = ['draw' => '🎨', 'edit' => '🖌️', 'video' => '🎬'][$r['mode'] ?? 'draw'] ?? '🎨';
                 $statusClass = $isDeleted ? 'deleted' : $r['status'];
@@ -124,8 +125,9 @@ render_admin_nav('index');
                      data-input-count="<?= generation_input_image_count($r) ?>"
                      data-open-record>
                     <div class="thumb">
-                        <?php if ($r['mode'] === 'video' && record_image_src($r)): ?>
-                            <video src="<?= e(record_image_src($r)) ?>" muted></video>
+                        <?php $recVideoSrc = generation_record_video_src($r); ?>
+                        <?php if ($r['mode'] === 'video' && $recVideoSrc): ?>
+                            <video src="<?= e($recVideoSrc) ?>" muted preload="metadata"></video>
                         <?php elseif ($src): ?>
                             <img src="<?= e($src) ?>" alt="" loading="lazy">
                         <?php else: ?>
@@ -137,7 +139,7 @@ render_admin_nav('index');
                         <div class="prompt"><?= e($r['prompt'] ?: '(无提示词)') ?></div>
                         <div class="meta">
                             <span class="status-badge <?= $statusClass ?>"><?= e(generation_status_label($isDeleted ? 'deleted' : (string) $r['status'])) ?></span>
-                            <span><?= e(mode_display_label((string) ($r['mode'] ?? 'draw'))) ?> · <?= e($r['size'] ?? 'auto') ?></span>
+                            <span><?= e(generation_record_param_label($r)) ?></span>
                             <span><?= e($r['created_at']) ?></span>
                         </div>
                         <div class="foot">

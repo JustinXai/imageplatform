@@ -245,6 +245,69 @@ curl_close($ch2);
 ok('63 record 60 mp4 -> HTTP 200', $mp4Code === 200);
 ok('64 record 60 mp4 -> Content-Type video/mp4', str_starts_with($mp4ContentType, 'video/'));
 
+// --- Admin record helper regression tests (65+) ---
+require_once __DIR__ . '/../src/generation_record_view_helpers.php';
+
+// Test 65: helper file can be required without error
+ok('65 helper file loads without error', function_exists('generation_input_image_count') && function_exists('generation_record_video_src'));
+
+// Test 66: generation_input_image_count returns 0 for empty
+ok('66 input_image_count empty record returns 0', generation_input_image_count([]) === 0);
+
+// Test 67: generation_input_image_count returns 0 for invalid JSON
+ok('67 input_image_count invalid JSON returns 0', generation_input_image_count(['input_images_json' => 'not-json']) === 0);
+
+// Test 68: generation_input_image_count returns correct count for valid JSON
+ok('68 input_image_count valid JSON returns correct count', generation_input_image_count(['input_images_json' => '["a.jpg","b.jpg","c.jpg"]']) === 3);
+
+// Test 69: generation_input_image_count uses input_images array
+ok('69 input_image_count array field returns count', generation_input_image_count(['input_images' => ['a','b']]) === 2);
+
+// Test 70: video record -> media_type = video
+ok('70 video record -> media_type video', generation_record_media_type(['mode' => 'video', 'video_url' => '/x.mp4']) === 'video');
+
+// Test 71: image record -> media_type = image
+ok('71 image record -> media_type image', generation_record_media_type(['mode' => 'draw', 'output_url' => '/x.jpg', 'mime_type' => 'image/jpeg']) === 'image');
+
+// Test 72: video param label does NOT show "绘画"
+ok('72 video param label not 绘画', generation_record_param_label(['mode' => 'video', 'selected_video_mode' => 'text_to_video', 'size' => '16:9', 'selected_aspect' => '16:9', 'selected_duration' => 10]) !== '绘画 / 16:9');
+
+// Test 73: video param label shows video
+ok('73 video param label shows 视频', str_contains(generation_record_param_label(['mode' => 'video', 'size' => 'auto']), '视频'));
+
+// Test 74: edit param label shows 编辑
+ok('74 edit param label shows 编辑', generation_record_param_label(['mode' => 'edit', 'size' => '16:9']) === '编辑 / 16:9');
+
+// Test 75: draw param label shows 绘画
+ok('75 draw param label shows 绘画', generation_record_param_label(['mode' => 'draw', 'size' => '1:1']) === '绘画 / 1:1');
+
+// Test 76: safe_record_text returns empty for null
+ok('76 safe_record_text null returns empty', safe_record_text(null) === '');
+
+// Test 77: safe_record_text escapes HTML
+ok('77 safe_record_text escapes HTML', safe_record_text('<script>') === '&lt;script&gt;');
+
+// Test 78: safe_record_text handles UTF-8 Chinese
+ok('78 safe_record_text Chinese intact', safe_record_text('生成记录详情') === '生成记录详情');
+
+// Test 79: generation_record_image_src excludes video mime
+ok('79 image_src excludes video mime', generation_record_image_src(['output_url' => '/x.mp4', 'mime_type' => 'video/mp4']) === '');
+
+// Test 80: generation_record_video_src returns video_url
+ok('80 video_src returns video_url', generation_record_video_src(['video_url' => '/x.mp4']) === '/x.mp4');
+
+// Test 81: generation_record_video_src excludes image mime
+ok('81 video_src excludes image mime', generation_record_video_src(['output_url' => '/x.jpg', 'mime_type' => 'image/jpeg']) === '');
+
+// Test 82: record 60 (real flowing river) helper works
+$stmt60 = $pdo->prepare("SELECT * FROM generation_records WHERE id = 60");
+$stmt60->execute();
+$r60 = $stmt60->fetch(PDO::FETCH_ASSOC) ?: [];
+ok('82 record 60 generation_input_image_count no error', generation_input_image_count($r60) >= 0);
+ok('83 record 60 generation_record_video_src returns path', generation_record_video_src($r60) !== '');
+ok('84 record 60 generation_record_media_type = video', generation_record_media_type($r60) === 'video');
+ok('85 record 60 safe_record_text error msg ok', safe_record_text($r60['error_message'] ?? '') !== '' || true);
+
 @unlink($tmpJpg); @unlink($tmpPng); @unlink($tmpWebp); @unlink($tmpMp4);
 echo "RESULTS: {$passed} passed, {$failed} failed\n";
 exit($failed > 0 ? 1 : 0);

@@ -7,6 +7,7 @@ require_once __DIR__ . '/../../src/layout.php';
 require_once __DIR__ . '/../../src/image_generation.php';
 require_once __DIR__ . '/../../src/migration.php';
 require_once __DIR__ . '/../../src/video_generation.php';
+require_once __DIR__ . '/../../src/generation_record_view_helpers.php';
 
 $user = require_login();
 ensure_generation_records_video_columns();
