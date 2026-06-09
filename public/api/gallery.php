@@ -44,16 +44,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         $params[] = $mode;
     }
 
-    $stmt = db()->prepare("SELECT COUNT(*) FROM gallery $where");
+    $stmt = db()->prepare("SELECT COUNT(*) FROM gallery WHERE deleted_at IS NULL $where");
     $stmt->execute($params);
     $total = (int) $stmt->fetchColumn();
     $totalPages = max(1, (int) ceil($total / $limit));
     $offset = ($page - 1) * $limit;
 
     $stmt = db()->prepare(
-        "SELECT id, user_id, record_id, username, prompt, image_url, mime_type,
+        "SELECT id, user_id, record_id, username, prompt, image_url, video_url, mime_type,
                 model, mode, size, likes, created_at
-         FROM gallery $where
+         FROM gallery WHERE deleted_at IS NULL" . ($where ? " AND mode = ?" : "") . "
          ORDER BY created_at DESC
          LIMIT $limit OFFSET $offset"
     );
@@ -88,18 +88,19 @@ if ($action === 'share') {
         $src = record_image_src($record);
         if (!$src) api_error('该记录没有图片。');
 
-        $stmt = db()->prepare('SELECT id FROM gallery WHERE record_id = ? AND user_id = ? LIMIT 1');
+        $stmt = db()->prepare('SELECT id FROM gallery WHERE record_id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1');
         $stmt->execute([$recordId, $user['id']]);
         if ($stmt->fetch()) api_error('该作品已分享过。');
 
         db()->prepare(
-            'INSERT INTO gallery (user_id, record_id, username, prompt, image_url, mime_type, model, mode, size)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            'INSERT INTO gallery (user_id, record_id, username, prompt, image_url, video_url, mime_type, model, mode, size)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         )->execute([
             $user['id'], $recordId,
             $user['username'],
             $record['prompt'] ?? '',
             $src,
+            null,
             $record['mime_type'] ?? 'image/png',
             $record['model'] ?? '',
             $record['mode'] ?? 'draw',
@@ -122,10 +123,10 @@ if ($action === 'unshare') {
     $galleryId = (int) ($input['id'] ?? 0);
     $recordId  = (int) ($input['record_id'] ?? 0);
     if ($recordId > 0) {
-        db()->prepare('DELETE FROM gallery WHERE record_id = ? AND user_id = ?')
+        db()->prepare('UPDATE gallery SET deleted_at = NOW() WHERE record_id = ? AND user_id = ? AND deleted_at IS NULL')
             ->execute([$recordId, $user['id']]);
     } elseif ($galleryId > 0) {
-        db()->prepare('DELETE FROM gallery WHERE id = ? AND user_id = ?')
+        db()->prepare('UPDATE gallery SET deleted_at = NOW() WHERE id = ? AND user_id = ? AND deleted_at IS NULL')
             ->execute([$galleryId, $user['id']]);
     } else {
         api_error('参数不完整。');

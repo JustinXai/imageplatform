@@ -989,17 +989,34 @@ function ensure_gallery_table(): void
                 username VARCHAR(100) NOT NULL DEFAULT '',
                 prompt TEXT,
                 image_url VARCHAR(2000) NOT NULL DEFAULT '',
+                video_url VARCHAR(2000) NULL DEFAULT NULL,
                 mime_type VARCHAR(50) NOT NULL DEFAULT 'image/png',
                 model VARCHAR(100) NOT NULL DEFAULT '',
                 mode VARCHAR(20) NOT NULL DEFAULT 'draw',
                 size VARCHAR(20) NOT NULL DEFAULT 'auto',
                 likes INT NOT NULL DEFAULT 0,
+                deleted_at DATETIME NULL DEFAULT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 KEY idx_user_id (user_id),
+                KEY idx_record_id (record_id),
                 KEY idx_created (created_at),
-                KEY idx_mode (mode)
+                KEY idx_mode (mode),
+                KEY idx_deleted_at (deleted_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
         );
+    } else {
+        $columns = [];
+        $colStmt = db()->query('SHOW COLUMNS FROM gallery');
+        foreach ($colStmt->fetchAll() as $column) {
+            $columns[(string) $column['Field']] = true;
+        }
+        if (empty($columns['video_url'])) {
+            db()->exec("ALTER TABLE gallery ADD COLUMN video_url VARCHAR(2000) NULL DEFAULT NULL AFTER image_url");
+        }
+        if (empty($columns['deleted_at'])) {
+            db()->exec("ALTER TABLE gallery ADD COLUMN deleted_at DATETIME NULL DEFAULT NULL AFTER likes");
+            db()->exec("ALTER TABLE gallery ADD KEY idx_deleted_at (deleted_at)");
+        }
     }
     $checked = true;
 }
