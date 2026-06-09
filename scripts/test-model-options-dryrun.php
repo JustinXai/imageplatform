@@ -103,6 +103,24 @@ function normalize_aspect_options(string $raw, ?string $currentJson = null): arr
 function normalize_duration_options(string $raw, ?string $currentJson = null): array {
     return test_normalize_duration_options($raw, $currentJson);
 }
+function test_normalize_int_input($raw, string $label, int $min, int $max, ?int $fallback = null): int {
+    $value = trim((string) $raw);
+    if ($value === '') {
+        if ($fallback !== null) { return $fallback; }
+        throw new InvalidArgumentException($label . '不能为空。');
+    }
+    if (!preg_match('/^\d+$/', $value)) {
+        throw new InvalidArgumentException($label . '只能填写整数。');
+    }
+    $int = (int) $value;
+    if ($int < $min || $int > $max) {
+        throw new InvalidArgumentException($label . '必须在 ' . $min . ' 到 ' . $max . ' 之间。');
+    }
+    return $int;
+}
+function normalize_int_input($raw, string $label, int $min, int $max, ?int $fallback = null): int {
+    return test_normalize_int_input($raw, $label, $min, $max, $fallback);
+}
 
 $passed = 0;
 $failed = 0;
@@ -471,6 +489,67 @@ ok('94 UPDATE base placeholders = 35, with name=36, with name+api_key=37',
 // Test 95: fixed_seconds and video_resolution columns exist (saved via base update)
 $cols = $pdo->query("SHOW COLUMNS FROM ai_models WHERE Field IN ('fixed_seconds','video_resolution')")->fetchAll(PDO::FETCH_ASSOC);
 ok('95 fixed_seconds and video_resolution columns exist', count($cols) === 2);
+
+// =====================================================================
+// max_reference_images validation tests (range 0-9)
+// =====================================================================
+// Test 96: maxRef=9 passes
+try {
+    $v = test_normalize_int_input('9', '最大参考图数', 0, 9, 9);
+    ok('96 maxRef=9 passes', $v === 9);
+} catch (Throwable $e) { ok('96 maxRef=9 passes', false); }
+
+// Test 97: maxRef=8 passes
+try {
+    $v = test_normalize_int_input('8', '最大参考图数', 0, 9, 9);
+    ok('97 maxRef=8 passes', $v === 8);
+} catch (Throwable $e) { ok('97 maxRef=8 passes', false); }
+
+// Test 98: maxRef=10 fails (out of range)
+$e98 = false;
+try { test_normalize_int_input('10', '最大参考图数', 0, 9, 9); } catch (Throwable $t) { $e98 = true; }
+ok('98 maxRef=10 fails', $e98);
+
+// Test 99: maxRef=55 fails
+$e99 = false;
+try { test_normalize_int_input('55', '最大参考图数', 0, 9, 9); } catch (Throwable $t) { $e99 = true; }
+ok('99 maxRef=55 fails', $e99);
+
+// Test 100: maxRef=-1 fails (non-integer detection catches it first, -1 becomes int -1)
+$e100 = false;
+try { test_normalize_int_input('-1', '最大参考图数', 0, 9, 9); } catch (Throwable $t) { $e100 = true; }
+ok('100 maxRef=-1 fails', $e100);
+
+// Test 101: maxRef=abc fails (non-numeric)
+$e101 = false;
+try { test_normalize_int_input('abc', '最大参考图数', 0, 9, 9); } catch (Throwable $t) { $e101 = true; }
+ok('101 maxRef=abc fails', $e101);
+
+// Test 102: maxRef empty string uses fallback
+try {
+    $v = test_normalize_int_input('', '最大参考图数', 0, 9, 9);
+    ok('102 maxRef empty uses fallback=9', $v === 9);
+} catch (Throwable $e) { ok('102 maxRef empty uses fallback=9', false); }
+
+// Test 103: DB maxRef updated correctly for nana-banana-2
+$pdo->prepare("UPDATE ai_models SET max_reference_images=? WHERE id=2")->execute([8]);
+$row = $pdo->query("SELECT max_reference_images FROM ai_models WHERE id=2")->fetch(PDO::FETCH_ASSOC);
+ok('103 nana-banana-2 maxRef=8 saved', $row['max_reference_images'] == '8');
+// restore
+$pdo->prepare("UPDATE ai_models SET max_reference_images=? WHERE id=2")->execute([9]);
+
+// Test 104: DB maxRef updated correctly for veo-omni-flash
+$pdo->prepare("UPDATE ai_models SET max_reference_images=? WHERE id=5")->execute([8]);
+$row = $pdo->query("SELECT max_reference_images FROM ai_models WHERE id=5")->fetch(PDO::FETCH_ASSOC);
+ok('104 veo-omni-flash maxRef=8 saved', $row['max_reference_images'] == '8');
+// restore
+$pdo->prepare("UPDATE ai_models SET max_reference_images=? WHERE id=5")->execute([9]);
+
+// Test 105: invalid maxRef does NOT update DB (exception thrown, no save)
+$blocked = false;
+try { test_normalize_int_input('999', '最大参考图数', 0, 9, 9); } catch (Throwable $t) { $blocked = true; }
+$row = $pdo->query("SELECT max_reference_images FROM ai_models WHERE id=2")->fetch(PDO::FETCH_ASSOC);
+ok('105 invalid maxRef rejected, DB unchanged', $blocked && $row['max_reference_images'] == '9');
 
 @unlink($tmpJpg); @unlink($tmpPng); @unlink($tmpWebp); @unlink($tmpMp4);
 echo "RESULTS: {$passed} passed, {$failed} failed\n";

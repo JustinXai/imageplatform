@@ -251,7 +251,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $editImageField = $editAdapterRaw === 'reference_images' ? 'reference_images' : 'image_urls';
             $supportsReference = (int) ($_POST['supports_reference'] ?? 0);
             $referenceRequired = (int) ($_POST['reference_required'] ?? 0);
-            $maxRefImages = normalize_int_input($_POST['max_reference_images'] ?? 1, '最大参考图数', 1, 16, 1);
+            $maxRefImages = normalize_int_input($_POST['max_reference_images'] ?? 1, '最大参考图数', 0, 9, 1);
             $maxRefVideos = normalize_int_input($_POST['max_reference_videos'] ?? 0, '最大参考视频数', 0, 9, 0);
             $maxRefAudios = normalize_int_input($_POST['max_reference_audios'] ?? 0, '最大参考音频数', 0, 9, 0);
             $videoAdapter = in_array(strtolower(trim((string) ($_POST['video_adapter'] ?? ''))), ['none','kaiyuncode','newtoken_video_async'], true)
@@ -361,7 +361,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $editImageField = $editAdapterRaw === 'reference_images' ? 'reference_images' : 'image_urls';
             $supportsReference = (int) ($_POST['supports_reference'] ?? ($existing['supports_reference'] ?? 0));
             $referenceRequired = (int) ($_POST['reference_required'] ?? ($existing['reference_required'] ?? 0));
-            $maxRefImages = normalize_int_input($_POST['max_reference_images'] ?? ($existing['max_reference_images'] ?? 1), '最大参考图数', 1, 16, 1);
+            $maxRefImages = normalize_int_input($_POST['max_reference_images'] ?? ($existing['max_reference_images'] ?? 1), '最大参考图数', 0, 9, (int) ($existing['max_reference_images'] ?? 1));
             $maxRefVideos = normalize_int_input($_POST['max_reference_videos'] ?? ($existing['max_reference_videos'] ?? 0), '最大参考视频数', 0, 9, 0);
             $maxRefAudios = normalize_int_input($_POST['max_reference_audios'] ?? ($existing['max_reference_audios'] ?? 0), '最大参考音频数', 0, 9, 0);
             $videoAdapter = in_array(strtolower(trim((string) ($_POST['video_adapter'] ?? ($existing['video_adapter'] ?? 'none')))), ['none','kaiyuncode','newtoken_video_async'], true)
