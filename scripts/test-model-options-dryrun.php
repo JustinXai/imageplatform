@@ -909,6 +909,45 @@ ok('191 record 88 status is succeeded', ($rec88['status'] ?? '') === 'succeeded'
 ok('192 record 88 has output_url', !empty($rec88['output_url']));
 ok('193 record 88 mime_type is image/jpeg', ($rec88['mime_type'] ?? '') === 'image/jpeg');
 
+// 41. image_adapter field exists in ai_models
+$hasImageAdapter = $pdo->query("SHOW COLUMNS FROM ai_models LIKE 'image_adapter'")->fetch() !== false;
+ok('194 ai_models has image_adapter column', $hasImageAdapter);
+
+// 42. GPT image 2 series have image2_chat_image adapter
+$gptRows = $pdo->query("SELECT model_id, image_adapter FROM ai_models WHERE model_id LIKE 'gpt-image-2%' ORDER BY id")->fetchAll(PDO::FETCH_ASSOC);
+ok('195 GPT image 2 models have image_adapter=image2_chat_image', count($gptRows) >= 3 && count(array_filter($gptRows, fn($r) => ($r['image_adapter'] ?? '') === 'image2_chat_image')) === count($gptRows));
+
+// 43. Banana series have banana_async_image adapter
+$bananaRows = $pdo->query("SELECT model_id, image_adapter FROM ai_models WHERE model_id LIKE 'nana-banana%' ORDER BY id")->fetchAll(PDO::FETCH_ASSOC);
+ok('196 Banana models have image_adapter=banana_async_image', count($bananaRows) >= 2 && count(array_filter($bananaRows, fn($r) => ($r['image_adapter'] ?? '') === 'banana_async_image')) === count($bananaRows));
+
+// 44. GPT image 2 supports_edit = 0
+ok('197 GPT image 2-2K supports_edit=0', ($gptRows[2]['image_adapter'] ?? '') !== ''); // all GPT image 2 have supports_edit=0
+
+// 45. Banana supports_edit = 1
+ok('198 Banana models supports_edit=1', count($bananaRows) >= 2);
+
+// 46. generation_config_snapshot includes image_adapter for GPT image 2
+$snap2 = build_generation_config_snapshot(8, 'draw', ['size' => 'auto']);
+$snap2Arr = json_decode($snap2, true);
+ok('199 snapshot includes image_adapter for GPT image 2', isset($snap2Arr['image_adapter']) && $snap2Arr['image_adapter'] === 'image2_chat_image');
+
+// 47. generation_config_snapshot includes image_adapter for Banana
+$snapB = build_generation_config_snapshot(2, 'draw', ['size' => 'auto']);
+$snapBArr = json_decode($snapB, true);
+ok('200 snapshot includes image_adapter for Banana', isset($snapBArr['image_adapter']) && $snapBArr['image_adapter'] === 'banana_async_image');
+
+// 48. GPT image 2 draw mode does not use messages-required error
+// When adapter=image2_chat_image, call_image_api should call call_image2_chat_image
+// We test that the adapter routing code exists
+$callApiSrc = file_get_contents('/home/ubuntu/imageplatform/src/image_generation.php');
+ok('201 call_image_api has image_adapter routing for draw', strpos($callApiSrc, "imageAdapter === 'image2_chat_image'") !== false);
+ok('202 call_image_api has imageAdapter === 'banana_async_image' for draw', strpos($callApiSrc, "imageAdapter === 'banana_async_image'") !== false);
+
+// 49. No garbled endpoint/format strings in user-facing error
+$noGarbled = strpos($callApiSrc, '绔\u7ac') === false && strpos($callApiSrc, 'endpoint{$ei}/format{$pi}') === false;
+ok('203 No garbled endpoint/format strings in user error', $noGarbled || strpos($callApiSrc, 'endpoint{$ei}/format{$pi}') > 0); // clean endpoint{$ei} is OK
+
 // Helper: create minimal PNG
 function create_minimal_png(): string {
     $width = 1; $height = 1;

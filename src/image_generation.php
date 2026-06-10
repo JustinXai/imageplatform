@@ -42,6 +42,7 @@ function build_generation_config_snapshot(int $modelId, string $mode, array $par
                 'base_url', 'model_id', 'invoke_mode', 'auth_type', 'credits',
                 'supports_edit', 'edit_adapter', 'edit_image_field', 'max_reference_images', 'edit_endpoint', 'edit_poll_endpoint',
                 'supports_reference', 'reference_required', 'video_adapter', 'fixed_seconds', 'video_resolution', 'video_aspect_ratio', 'input_mode',
+                'image_adapter',
             ] as $field) {
                 if (array_key_exists($field, $model) && $model[$field] !== null) {
                     $snapshot[$field] = $model[$field];
@@ -1558,6 +1559,227 @@ function remote_file_head(string $url, int $timeout = 20): array
     ];
 }
 
+/**
+ * Banana async image adapter — handles both draw and edit modes.
+ * draw:   POST /v1/videos { model, prompt, input_mode: "text_to_image" }
+ * edit:   POST /v1/videos { model, prompt, reference_images: [...] }
+ * poll:   GET  /v1/videos/{task_id}
+ *
+ * @param string $baseUrl
+ * @param string $apiKey
+ * @param array  $record  must contain: model, prompt, mode (draw|edit)
+ * @param int    $timeout
+ * @return array  task_id and task details
+ */
+
+/**
+ * Image2 chat-image adapter — POST /v1/chat/completions with messages format.
+ *
+ * Payload:
+ *   { "model": "gpt-image-2-2K", "messages": [{"role":"user","content":"prompt text"}] }
+ *
+ * No prompt-only, no reference_images, no images endpoint.
+ *
+ * @param string $baseUrl
+ * @param string $apiKey
+ * @param array  $record  must contain: model, prompt
+ * @param int    $timeout
+ * @return array  api_curl_post_json compatible response
+ */
+function call_image2_chat_image(string $baseUrl, string $apiKey, array $record, int $timeout = 60): array
+{
+    $model = trim((string) ($record['model'] ?? ''));
+    $prompt = trim((string) ($record['prompt'] ?? ''));
+
+    if ($model === '' || $prompt === '') {
+        throw new RuntimeException('Image2 适配器：模型名称或提示词为空。');
+    }
+
+    $endpoint = safe_join_api_url($baseUrl, '/v1/chat/completions');
+    $payload = [
+        'model' => $model,
+        'messages' => [['role' => 'user', 'content' => $prompt]],
+    ];
+
+    Logger::info('IMAGE2_CHAT_SUBMIT', [
+        'url' => $endpoint,
+        'model' => $model,
+        'prompt_len' => mb_strlen($prompt, 'UTF-8'),
+    ]);
+
+    $authType = strtolower(trim((string) ($record['auth_type'] ?? 'bearer')));
+    $headers = ['Content-Type: application/json'];
+    if ($authType === 'x-api-key') {
+        $headers[] = 'x-api-key: ' . $apiKey;
+    } else {
+        $headers[] = 'Authorization: Bearer ' . $apiKey;
+    }
+
+    $ch = curl_init($endpoint);
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => $timeout,
+        CURLOPT_CONNECTTIMEOUT => 15,
+        CURLOPT_HTTPHEADER => $headers,
+        CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+    ]);
+    $raw = curl_exec($ch);
+    $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlErr = curl_error($ch);
+    curl_close($ch);
+
+    if ($curlErr !== '') {
+        return [
+            'raw' => $curlErr,
+            'http_code' => 0,
+            'content_type' => '',
+            'error' => $curlErr,
+        ];
+    }
+
+    $data = json_decode((string) $raw, true);
+
+    // Check for upstream API errors
+    if (is_array($data) && isset($data['error'])) {
+        $err = $data['error'];
+        $errMsg = is_array($err) ? ($err['message'] ?? json_encode($err)) : (string) $err;
+        // Clean error for user display — no raw JSON dump
+        $displayMsg = api_error_message($data, 'Image2 接口返回错误');
+        if (stripos($errMsg, 'messages') !== false && stripos($errMsg, 'required') !== false) {
+            throw new RuntimeException('图片生成失败：当前模型接口配置异常（messages 字段错误）。请联系管理员检查 Image2 适配器配置。');
+        }
+        throw new RuntimeException('图片生成失败：' . $displayMsg);
+    }
+
+    if ($httpCode < 200 || $httpCode >= 300) {
+        $displayMsg = api_error_message($data ?? [], 'Image2 接口请求失败');
+        throw new RuntimeException('图片生成失败：' . $displayMsg);
+    }
+
+    if (!is_array($data)) {
+        throw new RuntimeException('Image2 接口返回格式异常。');
+    }
+
+    // Parse response: choices[0].message.content or b64_json
+    $content = null;
+    if (isset($data['choices'][0]['message']['content'])) {
+        $content = $data['choices'][0]['message']['content'];
+    } elseif (isset($data['choices'][0]['message']['b64_json'])) {
+        $content = base64_decode($data['choices'][0]['message']['b64_json'], true);
+    } elseif (isset($data['choices'][0]['message']['image_url'])) {
+        $content = $data['choices'][0]['message']['image_url'];
+    }
+
+    if ($content === null) {
+        throw new RuntimeException('Image2 接口返回数据格式无法解析，未找到图片内容。请检查模型是否正确配置。');
+    }
+
+    // Return a synthetic response compatible with store_image_generation_data
+    if (is_string($content) && strlen($content) > 0 && (strpos($content, 'http') === 0 || strpos($content, '/') === 0)) {
+        // URL returned — treat as remote URL
+        return [
+            'raw' => json_encode(['url' => $content], JSON_UNESCAPED_UNICODE),
+            'http_code' => $httpCode,
+            'content_type' => 'application/json',
+            'error' => '',
+        ];
+    } elseif (is_string($content) && strlen($content) > 100) {
+        // Likely base64 image data
+        return [
+            'raw' => json_encode(['b64_json' => $data['choices'][0]['message']['b64_json'] ?? ''], JSON_UNESCAPED_UNICODE),
+            'http_code' => $httpCode,
+            'content_type' => 'application/json',
+            'error' => '',
+        ];
+    }
+
+    throw new RuntimeException('Image2 接口返回数据无法识别图片格式。');
+}
+
+
+function call_banana_async_image_submit(string $baseUrl, string $apiKey, array $record, int $timeout = 60): array
+{
+    $isEdit = ($record['mode'] ?? 'draw') === 'edit';
+    $imageUrls = $isEdit ? image_reference_urls_from_record($record) : [];
+    $submitEndpoint = trim((string) ($record['edit_endpoint'] ?? '/v1/videos')) ?: '/v1/videos';
+    $model = (string) ($record['model'] ?? '');
+    $prompt = (string) ($record['prompt'] ?? '');
+
+    $payload = ['model' => $model, 'prompt' => $prompt];
+    if ($isEdit) {
+        $payload['reference_images'] = $imageUrls;
+    } else {
+        $payload['input_mode'] = 'text_to_image';
+    }
+
+    $submitUrl = safe_join_api_url($baseUrl, $submitEndpoint);
+    $headers = ['Content-Type: application/json'];
+    $authType = strtolower(trim((string) ($record['auth_type'] ?? 'bearer')));
+    if ($authType === 'x-api-key') {
+        $headers[] = 'x-api-key: ' . $apiKey;
+    } else {
+        $headers[] = 'Authorization: Bearer ' . $apiKey;
+    }
+
+    Logger::info('BANANA_ASYNC_SUBMIT', [
+        'url' => $submitUrl,
+        'model' => $model,
+        'mode' => $isEdit ? 'edit' : 'draw',
+        'has_reference' => $isEdit && !empty($imageUrls),
+    ]);
+
+    $ch = curl_init($submitUrl);
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => $timeout,
+        CURLOPT_CONNECTTIMEOUT => 15,
+        CURLOPT_HTTPHEADER => $headers,
+        CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+    ]);
+    $raw = curl_exec($ch);
+    $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlErr = curl_error($ch);
+    curl_close($ch);
+
+    if ($curlErr !== '') {
+        throw new RuntimeException('Banana 异步图片生成提交失败：网络错误。');
+    }
+    $data = json_decode((string) $raw, true);
+    if (!is_array($data)) {
+        throw new RuntimeException('Banana 异步图片生成返回格式异常，无法解析任务响应。');
+    }
+    if ($httpCode < 200 || $httpCode >= 300) {
+        $msg = api_error_message($data, generation_response_excerpt((string) $raw));
+        throw new RuntimeException('Banana 异步图片生成任务创建失败（HTTP ' . $httpCode . '）：' . $msg);
+    }
+    $taskId = image_edit_task_id($data);
+    if ($taskId === '') {
+        Logger::warning('BANANA_ASYNC_TASK_ID_MISSING', ['keys' => array_keys($data)]);
+        throw new RuntimeException('Banana 异步任务已响应，但未返回任务 ID。');
+    }
+
+    $recordId = (int) ($record['id'] ?? 0);
+    if ($recordId > 0) {
+        $pdo = db();
+        $stmt = $pdo->prepare(
+            "UPDATE generation_records
+             SET remote_task_id = ?, status = 'running', started_at = NOW(), updated_at = NOW()
+             WHERE id = ? AND status = 'queued'"
+        );
+        $stmt->execute([$taskId, $recordId]);
+    }
+
+    return [
+        'task_id' => $taskId,
+        'data' => $data,
+        'http_code' => $httpCode,
+    ];
+}
+
+
+
 function call_newtoken_async_reference_edit_api_submit(string $baseUrl, string $apiKey, array $record, int $timeout = 60): array
 {
     $imageUrls = image_reference_urls_from_record($record);
@@ -2217,6 +2439,36 @@ function call_image_api(string $baseUrl, string $apiKey, array $record, int $tim
         throw new RuntimeException('当前模型未配置受支持的编辑适配器。');
     }
 
+    // 绘画模式：根据 image_adapter 白名单路由
+    $imageAdapter = trim((string) ($record['image_adapter'] ?? ''));
+    Logger::info('CALL_IMAGE_API_DRAW', ['imageAdapter' => $imageAdapter, 'model' => ($record['model'] ?? 'N/A')]);
+
+    if ($imageAdapter === 'banana_async_image') {
+        // Banana async: submit → async task → poll
+        $submitResult = call_banana_async_image_submit($baseUrl, $apiKey, $record, $timeout);
+        return [
+            'raw' => json_encode(['task_id' => $submitResult['task_id'], 'status' => 'submitted'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'http_code' => 200,
+            'content_type' => 'application/json',
+            'error' => '',
+        ];
+    }
+
+    if ($imageAdapter === 'image2_chat_image') {
+        // Image2 chat: POST /v1/chat/completions with messages format
+        return call_image2_chat_image($baseUrl, $apiKey, $record, $timeout);
+    }
+
+    if ($imageAdapter === 'seedream_image' || $imageAdapter === 'grok_image') {
+        throw new RuntimeException('图片适配器 ' . $imageAdapter . ' 尚未配置完整，请联系管理员。');
+    }
+
+    // 未配置 image_adapter 的模型
+    if (!empty($imageAdapter)) {
+        throw new RuntimeException('不受支持的图片适配器：' . $imageAdapter . '。请检查模型配置。');
+    }
+
+    // 完全没有 image_adapter 时，使用 chat/completions 路线（兼容模式）
     return call_image_generation_api($baseUrl, $apiKey, $record, $timeout);
 
 }
@@ -2758,7 +3010,7 @@ function call_image_generation_api(string $baseUrl, string $apiKey, array $recor
 
         foreach ($payloads as $pi => $payload) {
 
-            $attemptLabel = "绔偣{$ei}/鏍煎紡{$pi}";
+            $attemptLabel = "endpoint{$ei}/format{$pi}";
 
             Logger::info('鍥剧墖API璇锋眰', [
 
@@ -2800,7 +3052,7 @@ function call_image_generation_api(string $baseUrl, string $apiKey, array $recor
 
                 if ($httpCode >= 200 && $httpCode < 300) {
 
-                    Logger::info('鍥剧墖API鎴愬姛', ['attempt' => $attemptLabel]);
+                    Logger::info('IMAGE_API_SUCCESS', ['attempt' => $attemptLabel]);
 
                     return $response;
 
@@ -2874,9 +3126,9 @@ function call_image_generation_api(string $baseUrl, string $apiKey, array $recor
 
                     // 鎵€鏈夐噸璇曢兘鐢ㄥ畬浜嗭紝璁板綍鏈€鍚庨敊璇户缁皾璇曚笅涓€涓鐐?
 
-                    $lastError = "{$attemptLabel}锛坽$retries}娆￠噸璇曞悗锛夛細" . $errDetail;
+                    $lastError = "endpoint {$ei}/format {$pi}，重试 {$retries} 次后：" . $errDetail;
 
-                    Logger::info('鍥剧墖API绔偣澶辫触', ['url' => $url, 'error' => $lastError]);
+                    Logger::info('IMAGE_API_ENDPOINT_FAILED', ['url' => $url, 'error' => $lastError]);
 
                     break; // 璺冲嚭閲嶈瘯寰幆锛屽皾璇曚笅涓€涓鐐?鏍煎紡
 
@@ -2888,13 +3140,13 @@ function call_image_generation_api(string $baseUrl, string $apiKey, array $recor
 
                 $errDetail = $httpCode >= 500
 
-                    ? 'HTTP ' . $httpCode . ': ' . generation_response_excerpt((string) $raw)
+                    ? 'HTTP ' . $httpCode . ': 服务器错误'
 
-                    : 'HTTP ' . $httpCode . ': ' . (is_string($raw) ? substr(strip_tags($raw), 0, 200) : '');
+                    : 'HTTP ' . $httpCode . ': 请求失败';
 
                 $lastError = $attemptLabel . ': ' . $errDetail;
 
-                Logger::info('鍥剧墖API鏍煎紡澶辫触', ['attempt' => $attemptLabel, 'error' => $errDetail]);
+                Logger::info('IMAGE_API_FORMAT_FAILED', ['attempt' => $attemptLabel, 'error' => $errDetail]);
 
                 break; // 璺冲嚭閲嶈瘯寰幆锛屽皾璇曚笅涓€涓牸寮?绔偣
 
@@ -3838,6 +4090,7 @@ function resolve_image_generation_config(array $record): array
             'edit_image_field' => trim((string) ($modelConfig['edit_image_field'] ?? 'reference_images')) ?: 'reference_images',
             'edit_endpoint' => trim((string) ($modelConfig['edit_endpoint'] ?? '/v1/videos')) ?: '/v1/videos',
             'edit_poll_endpoint' => trim((string) ($modelConfig['edit_poll_endpoint'] ?? '/v1/videos/{task_id}')) ?: '/v1/videos/{task_id}',
+            'image_adapter' => trim((string) ($modelConfig['image_adapter'] ?? '')),
             'max_reference_images' => max(1, (int) ($modelConfig['max_reference_images'] ?? max_edit_images())),
         ];
         $record['__live_api_key'] = (string) $modelConfig['api_key'];
@@ -4212,6 +4465,7 @@ function perform_generation_record(int $recordId, ?int $timeout = null): array
     $record['edit_image_field'] = $config['edit_image_field'] ?? 'image_urls';
     $record['edit_endpoint'] = $config['edit_endpoint'] ?? '/v1/videos';
     $record['auth_type'] = $config['auth_type'] ?? 'bearer';
+    $record['image_adapter'] = $config['image_adapter'] ?? '';
 
 
     // 统一调用 /images/generations（draw/edit 都走这条路）
