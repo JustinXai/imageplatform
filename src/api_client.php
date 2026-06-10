@@ -484,3 +484,62 @@ function save_input_image_file(string $content, string $mime): string
     $format = $formatMap[$mime] ?? 'png';
     return api_save_binary_file($content, $format, 'reference');
 }
+
+/**
+ * GET a JSON URL with Bearer auth. Returns ['data' => string, 'http_code' => int, 'error' => string].
+ *
+ * @param string $url
+ * @param string $apiKey
+ * @param int    $timeout
+ * @return array
+ */
+function http_get_json(string $url, string $apiKey, int $timeout = 30): array
+{
+    $ch = curl_init($url);
+    $authType = strtolower(trim((string) (defined('AUTH_TYPE') ? AUTH_TYPE : 'bearer')));
+    $headers = [];
+    if ($authType === 'x-api-key') {
+        $headers[] = 'x-api-key: ' . $apiKey;
+    } else {
+        $headers[] = 'Authorization: Bearer ' . $apiKey;
+    }
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => $timeout,
+        CURLOPT_CONNECTTIMEOUT => 15,
+        CURLOPT_HTTPHEADER => $headers,
+    ]);
+    $data = curl_exec($ch);
+    $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlErr = curl_error($ch);
+    curl_close($ch);
+    return [
+        'data' => $data,
+        'http_code' => $httpCode,
+        'error' => $curlErr,
+    ];
+}
+
+/**
+ * Check whether poll data contains a usable result URL (image or video).
+ * Tries the same field set as store_nano_banana_video_result().
+ *
+ * @param array $pollData
+ * @return bool
+ */
+function has_result_url(array $pollData): bool
+{
+    $url = $pollData['url']
+        ?? $pollData['image_url']
+        ?? $pollData['video_url']
+        ?? $pollData['result_url']
+        ?? $pollData['output_url']
+        ?? ($pollData['metadata']['result_urls'][0] ?? null)
+        ?? ($pollData['metadata']['url'] ?? null)
+        ?? ($pollData['data']['url'] ?? null)
+        ?? ($pollData['data']['image_url'] ?? null)
+        ?? ($pollData['data']['video_url'] ?? null)
+        ?? ($pollData['image']['url'] ?? null)
+        ?? null;
+    return is_string($url) && $url !== '' && filter_var($url, FILTER_VALIDATE_URL) !== false;
+}

@@ -1694,13 +1694,8 @@ function poll_image_edit_task(string $baseUrl, string $apiKey, string $taskId, i
         }
         $status = image_edit_task_status($pollData);
         $remoteStatus = $status;
-        $responseSummary = json_encode([
-            'task_id' => $taskId,
-            'status' => $status,
-            'error' => api_error_message($pollData, ''),
-            'has_video_url' => !empty($pollData['video_url']),
-            'has_url' => !empty($pollData['url']),
-        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        // Save full poll response so retrieve_image_edit_task_result can access all fields including url/image_url/metadata
+        $responseSummary = json_encode($pollData, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         $pdo = db();
         $stmt = $pdo->prepare("UPDATE generation_records SET remote_status = ?, edit_task_id = ?, edit_task_status = ?, edit_task_response = ?, last_poll_at = NOW(), updated_at = NOW() WHERE id = ?");
         $stmt->execute([$remoteStatus, $taskId, $status, $responseSummary, $recordId]);
@@ -1720,6 +1715,40 @@ function poll_image_edit_task(string $baseUrl, string $apiKey, string $taskId, i
             throw new RuntimeException('上游任务失败：' . $msg);
         }
         if (image_edit_task_is_success($status)) {
+            // completed/success status reached — but /v1/videos may return completed
+            // before the URL field is populated. Wait a short grace period and re-poll.
+            Logger::info('IMAGE_EDIT_POLL_SUCCESS_STATUS', [
+                'task_id' => $taskId,
+                'status' => $status,
+                'pollData_keys' => array_keys($pollData),
+                'url_in_pollData' => ($pollData['url'] ?? null),
+                'has_result_url' => has_result_url($pollData),
+            ]);
+            if (!has_result_url($pollData)) {
+                Logger::info('IMAGE_EDIT_POLL_COMPLETED_NO_URL', [
+                    'task_id' => $taskId,
+                    'status' => $status,
+                    'elapsed' => time() - $startTime,
+                    'waiting_grace' => 5,
+                ]);
+                sleep(5);
+                // Re-fetch latest state
+                $pollResponse2 = http_get_json($baseUrl . '/v1/videos/' . $taskId, $apiKey, $timeout);
+                $pollData2 = json_decode((string) ($pollResponse2['data'] ?? ''), true) ?: [];
+                $pollData = $pollData2;
+                $responseSummary2 = json_encode($pollData2, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                $stmt2 = $pdo->prepare("UPDATE generation_records SET edit_task_response = ?, last_poll_at = NOW(), updated_at = NOW() WHERE id = ?");
+                $stmt2->execute([$responseSummary2, $recordId]);
+                if (!has_result_url($pollData2)) {
+                    Logger::warning('IMAGE_EDIT_POLL_STILL_NO_URL', [
+                        'task_id' => $taskId,
+                        'poll2_status' => image_edit_task_status($pollData2),
+                    ]);
+                    throw new RuntimeException("上游任务已完成（status={$status}），但 poll 重试后仍未返回可用结果 URL。可能当前模型不支持该端点或返回格式不兼容。");
+                }
+                Logger::info('IMAGE_EDIT_POLL_URL_ARRIVED', ['task_id' => $taskId]);
+                return;
+            }
             Logger::info('IMAGE_EDIT_POLL_COMPLETED', ['task_id' => $taskId, 'elapsed' => time() - $startTime]);
             return;
         }
@@ -1764,21 +1793,29 @@ function retrieve_image_edit_task_result(int $recordId): array
 function store_nano_banana_video_result(int $recordId, array $pollData, array $record): void
 {
     // Try multiple common URL field names for both video and image results
-    $videoUrl = $pollData['video_url']
-        ?? $pollData['url']
+    // Priority: top-level URL fields, then nested metadata/result_urls (used by /v1/images/generations)
+    $videoUrl = $pollData['url']
         ?? $pollData['image_url']
+        ?? $pollData['video_url']
         ?? $pollData['result_url']
         ?? $pollData['output_url']
-        ?? $pollData['data']['url']
-        ?? $pollData['data']['video_url']
-        ?? $pollData['data']['image_url']
-        ?? $pollData['image']['url']
+        ?? ($pollData['metadata']['result_urls'][0] ?? null)
+        ?? ($pollData['metadata']['url'] ?? null)
+        ?? ($pollData['data']['url'] ?? null)
+        ?? ($pollData['data']['image_url'] ?? null)
+        ?? ($pollData['data']['video_url'] ?? null)
+        ?? ($pollData['image']['url'] ?? null)
         ?? null;
 
     if (!is_string($videoUrl) || $videoUrl === '' || !filter_var($videoUrl, FILTER_VALIDATE_URL)) {
         $status = $pollData['status'] ?? 'unknown';
-        Logger::warning('NANO_BANANA_NO_VIDEO_URL', ['record_id' => $recordId, 'status' => $status, 'keys' => array_keys($pollData)]);
-        throw new RuntimeException("Nano Banana 任务已完成（status={$status}），但未返回图片或视频结果地址。可能当前模型在图片编辑模式下不支持该端点，或上游平台返回格式不兼容。");
+        Logger::warning('NANO_BANANA_NO_URL', [
+            'record_id' => $recordId,
+            'status' => $status,
+            'keys' => array_keys($pollData),
+            'has_metadata' => isset($pollData['metadata']),
+        ]);
+        throw new RuntimeException("上游任务已完成（status={$status}），但未返回可用结果 URL。可能当前模型不支持该端点或返回格式不兼容。");
     }
 
     $saved = save_nano_banana_video_file($videoUrl, $recordId);

@@ -866,6 +866,49 @@ $hasStoreTry = strpos($snippet3, 'store_nano_banana_video_result') !== false && 
 );
 ok('180 store_nano_banana_video_result called inside try-catch', $hasStoreTry);
 
+// 34. has_result_url helper: detects URL in various poll data structures
+ok('181 has_result_url function exists', function_exists('has_result_url'));
+ok('182 has_result_url detects url field', has_result_url(['url' => 'https://example.com/img.jpg']) === true);
+ok('183 has_result_url detects image_url field', has_result_url(['image_url' => 'https://example.com/img.png']) === true);
+ok('184 has_result_url detects video_url field', has_result_url(['video_url' => 'https://example.com/vid.mp4']) === true);
+ok('185 has_result_url detects metadata.result_urls[0]', has_result_url(['metadata' => ['result_urls' => ['https://example.com/img.webp']]]) === true);
+ok('186 has_result_url rejects null/empty', has_result_url(['url' => null]) === false);
+ok('187 has_result_url rejects non-URL strings', has_result_url(['url' => 'not-a-url']) === false);
+
+// 35. http_get_json function exists
+ok('188 http_get_json function exists', function_exists('http_get_json'));
+$pollLikeVideos = [
+    'id' => 'task_123',
+    'status' => 'completed',
+    'url' => 'https://aoss.aimh8.com/image/abc123?Expires=123&Signature=xyz',
+    'image_url' => 'https://aoss.aimh8.com/image/abc123?Expires=123&Signature=xyz',
+    'metadata' => ['result_urls' => ['https://aoss.aimh8.com/image/abc123?Expires=123&Signature=xyz']],
+    'video_url' => null,
+];
+ok('188b has_result_url detects url in /v1/videos-like response', has_result_url($pollLikeVideos) === true);
+
+// 37. Frontend: syncRecordCard for existing running card returns card (not null)
+$userJsSrc = file_get_contents('/home/ubuntu/imageplatform/public/assets/user.js');
+ok('188c user.js has syncRecordCard with existing && isTransient check', strpos($userJsSrc, "existing && isTransient") !== false);
+ok('188d user.js does not call prependRecordCard for running cards', !(strpos($userJsSrc, "if (existing && isTransient)") !== false && strpos($userJsSrc, "existing.remove()") !== false));
+
+// 38. edit_task_response is saved with full poll data (not just summary keys)
+$src = file_get_contents('/home/ubuntu/imageplatform/src/image_generation.php');
+$pollLoopStart = strpos($src, 'function poll_image_edit_task');
+$snippet = substr($src, $pollLoopStart, 3000);
+ok('188e poll loop saves edit_task_response = json_encode($pollData)', strpos($snippet, 'edit_task_response = ?, last_poll_at') !== false && strpos($snippet, '$responseSummary = json_encode($pollData') !== false);
+
+// 39. edit mode with nana-banana-2 in DB has correct endpoint
+$nanaRow = $pdo->query("SELECT edit_endpoint, edit_image_field FROM ai_models WHERE id=2")->fetch(PDO::FETCH_ASSOC);
+ok('189 nana-banana-2 edit_endpoint is /v1/videos', ($nanaRow['edit_endpoint'] ?? '') === '/v1/videos');
+ok('190 nana-banana-2 edit_image_field is reference_images', ($nanaRow['edit_image_field'] ?? '') === 'reference_images');
+
+// 40. record 88 succeeded with output_url (real end-to-end edit result)
+$rec88 = $pdo->query("SELECT id, status, output_url, mime_type FROM generation_records WHERE id=88")->fetch(PDO::FETCH_ASSOC);
+ok('191 record 88 status is succeeded', ($rec88['status'] ?? '') === 'succeeded');
+ok('192 record 88 has output_url', !empty($rec88['output_url']));
+ok('193 record 88 mime_type is image/jpeg', ($rec88['mime_type'] ?? '') === 'image/jpeg');
+
 // Helper: create minimal PNG
 function create_minimal_png(): string {
     $width = 1; $height = 1;
