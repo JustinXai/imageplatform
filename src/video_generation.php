@@ -104,7 +104,7 @@ function video_payload_formats(array $record): array
             }
         }
 
-        // 多参考图（veo-omni-flash: ingredients_images）
+        // 多参考图（veo-omni-flash: Ingredients_images，注意大小写）
         if (!empty($spec['reference_field'])) {
             $refField = $spec['reference_field'];
             $refs = [];

@@ -166,7 +166,7 @@ define('NEWTOKEN_MODEL_SPECS', [
         'prompt_field' => 'prompt',
         'duration_field' => 'duration',
         'aspect_field' => 'aspect_ratio',
-        'reference_field' => 'ingredients_images',
+        'reference_field' => 'Ingredients_images',
         'result_fields' => ['video_url', 'url'],
         'supports_draw' => true,
         'supports_reference' => true,
@@ -183,7 +183,7 @@ define('NEWTOKEN_MODEL_SPECS', [
         'duration_field' => 'duration',
         'aspect_field' => 'aspect_ratio',
         'video_field' => 'video_url',
-        'reference_field' => 'ingredients_images',
+        'reference_field' => 'Ingredients_images',
         'result_fields' => ['video_url', 'url'],
         'supports_draw' => false,
         'supports_reference' => true,
@@ -1689,6 +1689,86 @@ function save_downloaded_media_file(string $binary, array $detected, string $buc
     }
 
     return api_save_binary_file($binary, $extension, $bucket);
+}
+
+function localize_remote_media_url(string $url, string $bucket = 'generations'): array
+{
+    $url = trim($url);
+    if ($url === '') {
+        throw new RuntimeException('上游完成，但结果下载/保存失败：结果 URL 为空。');
+    }
+
+    if (!is_remote_url($url)) {
+        $localPath = local_public_file_from_url($url);
+        if ($localPath === null || !is_file($localPath)) {
+            throw new RuntimeException('本地媒体文件不存在，无法完成结果校验。');
+        }
+        $detected = detect_downloaded_media_type($localPath, [], $url);
+        if (($detected['kind'] ?? 'unknown') === 'unknown' || ($detected['extension'] ?? '') === '') {
+            throw new RuntimeException('本地媒体文件类型无效。');
+        }
+        return [
+            'path' => $url,
+            'mime' => (string) ($detected['mime'] ?? ''),
+            'kind' => (string) ($detected['kind'] ?? 'unknown'),
+            'source_url' => $url,
+            'already_local' => true,
+        ];
+    }
+
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 120,
+        CURLOPT_CONNECTTIMEOUT => 20,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS => 5,
+        CURLOPT_SSL_VERIFYPEER => ssl_verify_enabled(),
+        CURLOPT_SSL_VERIFYHOST => ssl_verify_enabled() ? 2 : 0,
+        CURLOPT_HTTPHEADER => ['Accept: image/*,video/*;q=0.9,*/*;q=0.1'],
+    ]);
+    $raw = curl_exec($ch);
+    $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $contentType = (string) curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+    $curlError = (string) curl_error($ch);
+    curl_close($ch);
+
+    if (!is_string($raw) || $raw === '') {
+        throw new RuntimeException('上游完成，但结果下载/保存失败：未获取到文件内容。');
+    }
+    if ($httpCode !== 200) {
+        throw new RuntimeException('上游完成，但结果下载/保存失败：HTTP ' . $httpCode . '。');
+    }
+
+    $tmpFile = tempnam(sys_get_temp_dir(), 'gen-media-');
+    if ($tmpFile === false) {
+        throw new RuntimeException('上游完成，但结果下载/保存失败：无法创建临时文件。');
+    }
+
+    file_put_contents($tmpFile, $raw, LOCK_EX);
+    try {
+        $detected = detect_downloaded_media_type($tmpFile, ['content-type' => $contentType], $url);
+        if (($detected['kind'] ?? 'unknown') === 'unknown' || ($detected['extension'] ?? '') === '') {
+            throw new RuntimeException('上游完成，但结果下载/保存失败：结果不是有效图片或视频。');
+        }
+        if (($detected['mime'] ?? '') === 'text/html' || ($detected['header_mime'] ?? '') === 'text/html') {
+            throw new RuntimeException('上游完成，但结果下载/保存失败：返回了 text/html。');
+        }
+        $relativePath = save_downloaded_media_file($raw, $detected, $bucket);
+    } finally {
+        @unlink($tmpFile);
+    }
+
+    return [
+        'path' => $relativePath,
+        'mime' => (string) ($detected['mime'] ?? ''),
+        'kind' => (string) ($detected['kind'] ?? 'unknown'),
+        'source_url' => $url,
+        'already_local' => false,
+        'http_code' => $httpCode,
+        'content_type' => $contentType,
+        'curl_error' => $curlError,
+    ];
 }
 
 function image_reference_urls_from_record(array $record): array
@@ -4963,45 +5043,40 @@ function store_image_generation_data(int $recordId, array $data, array $record):
 
     } elseif (is_string($imageUrl) && $imageUrl !== '') {
 
-        if (is_remote_url($imageUrl)) {
+        try {
 
-            try {
-
-                $storedUrl = download_remote_image($imageUrl, 'generations');
-
-                Logger::info('REMOTE_IMAGE_CACHED_LOCALLY', [
-
-                    'record_id' => $recordId,
-
-                    'remote_url' => $imageUrl,
-
-                    'local_url' => $storedUrl,
-
-                ]);
-
-            } catch (Throwable $e) {
-
-                Logger::warning('REMOTE_IMAGE_CACHE_FAILED_KEEP_ORIGINAL', [
-
-                    'record_id' => $recordId,
-
-                    'remote_url' => $imageUrl,
-
-                    'error' => $e->getMessage(),
-
-                ]);
-
-                $storedUrl = $imageUrl;
-
+            $localized = localize_remote_media_url($imageUrl, 'generations');
+            if (($localized['kind'] ?? '') !== 'image') {
+                throw new RuntimeException('结果 URL 未返回有效图片。');
             }
+            $storedUrl = (string) ($localized['path'] ?? '');
+            $mime = (string) ($localized['mime'] ?? 'image/png');
 
-        } else {
+            Logger::info('REMOTE_IMAGE_CACHED_LOCALLY', [
 
-            $storedUrl = $imageUrl;
+                'record_id' => $recordId,
+
+                'remote_url' => $imageUrl,
+
+                'local_url' => $storedUrl,
+
+            ]);
+
+        } catch (Throwable $e) {
+
+            Logger::warning('REMOTE_IMAGE_CACHE_FAILED', [
+
+                'record_id' => $recordId,
+
+                'remote_url' => $imageUrl,
+
+                'error' => $e->getMessage(),
+
+            ]);
+
+            throw $e;
 
         }
-
-        $mime      = 'image/png';
 
     } else {
 
