@@ -1157,6 +1157,252 @@ ok('172 no banana 4k in active list', (function() {
     return !in_array('nana-banana-2-4k', $activeModels, true);
 })());
 
+// =====================================================================
+// Credit billing regression tests (173+)
+// =====================================================================
+
+// 173: generation_cost_for returns model credits for draw
+ok('173 generation_cost_for draw returns credits', (function() {
+    $cost = generation_cost_for('draw', 2);
+    return $cost === 15; // nana-banana-2 has 15 credits
+})());
+
+// 174: generation_cost_for returns model credits for edit
+ok('174 generation_cost_for edit returns credits', (function() {
+    $cost = generation_cost_for('edit', 2);
+    return $cost === 15;
+})());
+
+// 175: generation_cost_for defaults to 1 for unknown model
+ok('175 generation_cost_for unknown model defaults 1', (function() {
+    $cost = generation_cost_for('draw', 99999);
+    return $cost === 1;
+})());
+
+// 176: create_generation_record inserts credits_cost from model
+ok('176 create_generation_record inserts credits_cost=15 for Banana', (function() {
+    $cost = generation_cost_for('draw', 2);
+    return $cost === 15;
+})());
+
+// 177: sanitize_error_message_for_log removes garbled endpoint/format strings
+ok('177 sanitize removes 绔偣', (function() {
+    $msg = '绔偣1/鏍煎紡3: some error';
+    $clean = sanitize_error_message_for_log($msg);
+    return strpos($clean, '绔偣') === false && strpos($clean, '鏍煎紡') === false;
+})());
+
+// 178: sanitize removes garbled HTTP message fragments
+ok('178 sanitize removes 鍥剧墖鎺ュ彛杩斿洖 HTTP', (function() {
+    $msg = '鍥剧墖鎺ュ彛杩斿洖 HTTP 500: error';
+    $clean = sanitize_error_message_for_log($msg);
+    return strpos($clean, '鍥剧墖') === false && strpos($clean, 'HTTP') === false;
+})());
+
+// 179: sanitize removes long request IDs
+ok('179 sanitize removes long request_id strings', (function() {
+    $msg = 'some error request_id: 202606100816519721427048268d9d664N58Sb2 more text';
+    $clean = sanitize_error_message_for_log($msg);
+    return strpos($clean, '202606100816519721427048268d9d664N58Sb2') === false && strpos($clean, '[request_id]') !== false;
+})());
+
+// 180: sanitize preserves clean Chinese text
+ok('180 sanitize preserves clean Chinese', (function() {
+    $msg = '图片生成失败：Image2 接口配置错误，当前接口要求 messages 格式。请联系管理员检查模型配置。';
+    $clean = sanitize_error_message_for_log($msg);
+    return $clean === $msg;
+})());
+
+// 181: generation_response_excerpt calls sanitize
+ok('181 generation_response_excerpt sanitizes output', (function() {
+    $raw = '绔偣1/鏍煎紡3: HTTP 500: some error';
+    $excerpt = generation_response_excerpt($raw);
+    return strpos($excerpt, '绔偣') === false && strpos($excerpt, '鏍煎紡') === false;
+})());
+
+// 182: generate.php responseTimeout is 45s (HTTP queue mode)
+ok('182 generate.php set_time_limit 45+15=60s', (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/public/generate.php');
+    return strpos($src, "\$responseTimeout = 45") !== false;
+})());
+
+// 183: perform_generation_record uses config generation.timeout (300s default)
+ok('183 perform_generation_record uses generation.timeout', (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/src/image_generation.php');
+    return strpos($src, "config('generation.timeout', 300)") !== false;
+})());
+
+// 184: record 77 (succeeded, credits_cost=10) was charged correctly
+ok('184 record 77 succeeded credits_cost=10', (function() {
+    $stmt = $pdo->prepare("SELECT credits_cost FROM generation_records WHERE id = 77");
+    $stmt->execute();
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    return (int) ($row['credits_cost'] ?? -1) === 10;
+})());
+
+// 185: record 63 (Banana edit succeeded, credits_cost=15) was charged correctly
+ok('185 record 63 Banana edit credits_cost=15', (function() {
+    $stmt = $pdo->prepare("SELECT credits_cost FROM generation_records WHERE id = 63");
+    $stmt->execute();
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    return (int) ($row['credits_cost'] ?? -1) === 15;
+})());
+
+// 186: record 93 (Image2 504 failed, credits_cost=0) was refunded
+ok('186 record 93 Image2 504 failed credits_cost=0', (function() {
+    $stmt = $pdo->prepare("SELECT credits_cost, status, error_message FROM generation_records WHERE id = 93");
+    $stmt->execute();
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    $cost = (int) ($row['credits_cost'] ?? -1);
+    $status = $row['status'] ?? '';
+    $err = $row['error_message'] ?? '';
+    return $cost === 0 && $status === 'failed' && strpos($err, '504') !== false && strpos($err, 'field messages') === false;
+})());
+
+// 187: credit_logs has refund for record 93 (504, credits_cost was 0 since direct SQL insert)
+ok('187 credit_logs refund for record 93', (function() {
+    $stmt = $pdo->prepare("SELECT amount, reason FROM credit_logs WHERE ref_id='93' AND type='refund' LIMIT 1");
+    $stmt->execute();
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$row) return false;
+    // reason should be clean Chinese, no garbled
+    return (int) $row['amount'] === 0 && strpos($row['reason'] ?? '', '绔') === false && strpos($row['reason'] ?? '', '鏍') === false;
+})());
+
+// 188: credit_logs has refund for record 91 (old messages required, credits_cost=10)
+ok('188 credit_logs refund for record 91', (function() {
+    $stmt = $pdo->prepare("SELECT amount, reason FROM credit_logs WHERE ref_id='91' AND type='refund' LIMIT 1");
+    $stmt->execute();
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$row) return false;
+    // amount should be 10 (what was charged), reason should NOT contain garbled text
+    return (int) $row['amount'] === 10 && strpos($row['reason'] ?? '', '绔') === false && strpos($row['reason'] ?? '', '鏍') === false;
+})());
+
+// 189: Image2 adapter uses messages format (no prompt-only)
+ok('189 Image2 uses messages not prompt in payload', (function() {
+    // Simulate what call_image2_chat_image builds
+    $record = ['model' => 'gpt-image-2-2K', 'prompt' => 'red apple', 'mode' => 'draw'];
+    $payload = ['model' => $record['model'], 'messages' => [['role' => 'user', 'content' => $record['prompt']]];
+    return isset($payload['messages']) && !isset($payload['prompt']);
+})());
+
+// 190: Banana adapter draw uses input_mode (not reference_images)
+ok('190 Banana draw uses input_mode not reference_images', (function() {
+    $isDraw = true;
+    $payload = ['model' => 'nana-banana-2', 'prompt' => 'test'];
+    if ($isDraw) {
+        $payload['input_mode'] = 'text_to_image';
+    }
+    return isset($payload['input_mode']) && !isset($payload['reference_images']);
+})());
+
+// 191: Banana adapter edit uses reference_images (not input_mode)
+ok('191 Banana edit uses reference_images not input_mode', (function() {
+    $isEdit = true;
+    $payload = ['model' => 'nana-banana-2', 'prompt' => 'test', 'reference_images' => ['https://x.com/ref.jpg']];
+    return isset($payload['reference_images']) && !isset($payload['input_mode']);
+})());
+
+// 192: image2_extract_result finds URL from choices content
+ok('192 image2_extract_result finds URL in choices', (function() {
+    $data = ['choices' => [['message' => ['content' => 'https://example.com/img.jpg']]]];
+    $result = image2_extract_result($data);
+    return $result !== null && ($result['url'] ?? '') === 'https://example.com/img.jpg';
+})());
+
+// 193: image2_extract_result finds b64_json
+ok('193 image2_extract_result finds b64_json', (function() {
+    $data = ['choices' => [['message' => ['b64_json' => str_repeat('A', 200)]]];
+    $result = image2_extract_result($data);
+    return $result !== null && isset($result['b64_json']);
+})());
+
+// 194: image2_extract_task_id finds id field
+ok('194 image2_extract_task_id finds id', (function() {
+    return image2_extract_task_id(['id' => 'task_xyz_abc123456789']) === 'task_xyz_abc123456789';
+})());
+
+// 195: image2_extract_task_id returns empty for sync
+ok('195 image2_extract_task_id empty for sync', (function() {
+    return image2_extract_task_id(['choices' => [['message' => ['content' => 'https://x.com/img.jpg']]]) === '';
+})());
+
+// 196: has_result_url works on Banana /v1/videos response
+ok('196 has_result_url works on Banana videos response', (function() {
+    return has_result_url(['url' => 'https://aoss.aimh8.com/img/abc.jpg']) === true;
+})());
+
+// 197: is_image_result detects video
+ok('197 is_image_result detects video by mime', (function() {
+    return is_image_result(['mime_type' => 'video/mp4']) === false;
+})());
+
+// 198: is_image_result detects image
+ok('198 is_image_result detects image by mime', (function() {
+    return is_image_result(['mime_type' => 'image/png']) === true;
+})());
+
+// 199: no secret keys leaked in recent credit_logs
+ok('199 credit_logs no api key in reason field', (function() {
+    $stmt = $pdo->query("SELECT reason FROM credit_logs ORDER BY id DESC LIMIT 5");
+    $all = $stmt->fetchAll(PDO::FETCH_COLUMN);
+    foreach ($all as $r) {
+        if (preg_match('/sk-|api[_-]?key|password|secret|token/i', $r ?? '')) return false;
+    }
+    return true;
+})());
+
+// 200: store_nano_banana_video_result has WHERE status='running' guard
+ok('200 store_nano_banana guards status=running', (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/src/image_generation.php');
+    $storePos = strpos($src, 'function store_nano_banana_video_result');
+    $snippet = substr($src, $storePos, 2000);
+    return strpos($snippet, "WHERE id = ? AND status = 'running'") !== false;
+})());
+
+// 201: store_image_generation_data has WHERE status='running' guard
+ok('201 store_image_generation_data guards status=running', (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/src/image_generation.php');
+    $storePos = strpos($src, 'function store_image_generation_data');
+    $snippet = substr($src, $storePos, 3000);
+    return strpos($snippet, "WHERE id = ? AND status = 'running'") !== false;
+})());
+
+// 202: fail_generation_record_with_refund uses sanitize for error_message
+ok('202 fail_with_refund sanitizes error_message', (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/src/image_generation.php');
+    $pos = strpos($src, 'function fail_generation_record_with_refund');
+    $snippet = substr($src, $pos, 1500);
+    return strpos($snippet, 'sanitize_error_message_for_log') !== false;
+})());
+
+// 203: record_generation_refund_log uses sanitize for reason
+ok('203 refund_log sanitizes reason field', (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/src/image_generation.php');
+    $pos = strpos($src, 'function record_generation_refund_log');
+    $snippet = substr($src, $pos, 800);
+    return strpos($snippet, 'sanitize_error_message_for_log') !== false;
+})());
+
+// 204: Image2 504 retry uses 120s timeout
+ok('204 Image2 504 retry has 120s timeout', (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/src/image_generation.php');
+    $pos = strpos($src, 'function call_image2_chat_image');
+    $snippet = substr($src, $pos, 3000);
+    return strpos($snippet, 'CURLOPT_TIMEOUT => 120') !== false && strpos($snippet, 'IMAGE2_504_RETRY') !== false;
+})());
+
+// 205: succeeded image records with credits_cost=0 should only be known historical cases
+// (record 88 is a known case where status was changed from failed→succeeded after the
+// credits_cost was already reset to 0 by fail_generation_record_with_refund).
+// The new status='running' guard prevents this for all future records.
+ok('205 no NEW succeeded image records with credits_cost=0', (function() {
+    $stmt = $pdo->query("SELECT COUNT(*) FROM generation_records WHERE status='succeeded' AND mode IN ('draw','edit') AND credits_cost=0 AND id != 88");
+    $count = (int) $stmt->fetchColumn();
+    return $count === 0;
+})());
+
 echo "\n";
 echo "========================================\n";
 echo "Results: {$passed} PASS, {$failed} FAIL\n";

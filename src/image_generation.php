@@ -1790,7 +1790,48 @@ function call_image2_chat_image(string $baseUrl, string $apiKey, array $record, 
             }
             throw new RuntimeException('图片生成失败：' . $errMsg);
         }
-        throw new RuntimeException('图片生成失败：Image2 接口请求失败（HTTP ' . $httpCode . '）。请稍后重试。');
+
+        // 504 / 503：上游服务临时不可用，尝试重试一次（更长超时）
+        if ($httpCode === 504 || $httpCode === 503) {
+            Logger::info('IMAGE2_504_RETRY', [
+                'http_code' => $httpCode,
+                'retry_timeout' => 120,
+                'endpoint' => $endpoint,
+            ]);
+            $ch2 = curl_init($endpoint);
+            curl_setopt_array($ch2, [
+                CURLOPT_POST => true,
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT => 120,
+                CURLOPT_CONNECTTIMEOUT => 20,
+                CURLOPT_HTTPHEADER => $headers,
+                CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            ]);
+            $raw2 = curl_exec($ch2);
+            $httpCode2 = (int) curl_getinfo($ch2, CURLINFO_HTTP_CODE);
+            $curlErr2 = curl_error($ch2);
+            curl_close($ch2);
+
+            if ($curlErr2 === '' && $httpCode2 >= 200 && $httpCode2 < 300) {
+                $data2 = json_decode((string) $raw2, true);
+                if (is_array($data2)) {
+                    Logger::info('IMAGE2_504_RETRY_SUCCESS', ['http_code' => $httpCode2]);
+                    $data = $data2;
+                    $raw = $raw2;
+                    $httpCode = $httpCode2;
+                }
+            } else {
+                Logger::warning('IMAGE2_504_RETRY_FAILED', [
+                    'http_code' => $httpCode2,
+                    'curl_error' => $curlErr2,
+                ]);
+            }
+        }
+
+        // 再次检查重试后是否成功
+        if ($httpCode < 200 || $httpCode >= 300) {
+            throw new RuntimeException('图片生成失败：Image2 接口请求失败（HTTP ' . $httpCode . '）。请稍后重试。');
+        }
     }
 
     if (!is_array($data)) {
@@ -2006,7 +2047,7 @@ function call_newtoken_async_reference_edit_api_submit(string $baseUrl, string $
         $stmt = $pdo->prepare(
             "UPDATE generation_records
              SET remote_task_id = ?, remote_status = ?, edit_task_id = ?, edit_task_status = ?, edit_task_response = ?, status = 'running', last_poll_at = NOW(), updated_at = NOW()
-             WHERE id = ?"
+             WHERE id = ? AND status = 'running'"
         );
         $stmt->execute([$taskId, 'queued', $taskId, 'queued', json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), $recordId]);
     }
@@ -2243,7 +2284,7 @@ function store_nano_banana_video_result(int $recordId, array $pollData, array $r
              SET status = 'succeeded', output_url = NULL, output_base64 = NULL, mime_type = NULL,
                  video_url = ?, video_mime_type = ?, remote_status = ?, edit_task_status = 'completed',
                  finished_at = NOW(), error_message = NULL, updated_at = NOW()
-             WHERE id = ?"
+             WHERE id = ? AND status = 'running'"
         );
         $stmt->execute([$publicUrl, $mime, (string) ($pollData['status'] ?? 'completed'), $recordId]);
     } else {
@@ -2252,9 +2293,16 @@ function store_nano_banana_video_result(int $recordId, array $pollData, array $r
              SET status = 'succeeded', output_url = ?, output_base64 = NULL, mime_type = ?,
                  video_url = NULL, video_mime_type = NULL, remote_status = ?, edit_task_status = 'completed',
                  finished_at = NOW(), error_message = NULL, updated_at = NOW()
-             WHERE id = ?"
+             WHERE id = ? AND status = 'running'"
         );
         $stmt->execute([$publicUrl, $mime, (string) ($pollData['status'] ?? 'completed'), $recordId]);
+    }
+    if ($stmt->rowCount() === 0) {
+        Logger::warning('NANO_BANANA_STORE_SKIPPED', [
+            'record_id' => $recordId,
+            'reason' => 'record not in running status (may already be failed or succeeded)',
+        ]);
+        return;
     }
 
     Logger::info('NANO_BANANA_RESULT_STORED', [
@@ -2320,28 +2368,70 @@ function save_nano_banana_video_file(string $videoUrl, int $recordId): ?array
     }
 }
 
-function generation_response_excerpt(string $raw): string
-
+/**
+ * 清理错误消息中的乱码字符，防止写入日志时出现不可读内容。
+ * 移除：控制字符、上游错误中的 endpoint/format 乱码片段（如 绔偣、鏍煎紡）、
+ *       原始 request id、以及其他非可读字符。
+ */
+function sanitize_error_message_for_log(string $message): string
 {
+    // Step 1: 移除不可见字符（控制字符、零宽字符等）
+    $message = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', $message);
 
+    // Step 2: 移除 Unicode 替换字符 � (U+FFFD) 及其周围乱码序列
+    $message = preg_replace('/�+/u', '', $message);
+
+    // Step 3: 移除常见的 endpoint/format 乱码片段（来自旧版 call_image_generation_api 错误）
+    // 这些是从 NewToken 上游错误中被错误编码的 endpoint+format 标识符
+    $garbled = [
+        '绔偣',
+        '鏍煎紡',
+        '鍥剧墖鎺ユā',
+        '鍥剧墖鎺ユā鏈嶅姟閿欒',
+        '绔偣/鏍煎紡',
+        '绔偣1/鏍煎紡3',
+        '鍥剧墖鎺ュ彛杩斿洖 HTTP',
+        '鍥剧墖鎺ュ彛杩斿洖涓氬姟',
+        '鍥剧墖鎺ュ彛鏃犲搷搴',
+    ];
+    foreach ($garbled as $g) {
+        $message = str_replace($g, '', $message);
+    }
+
+    // Step 4: 移除上游 request id（格式：40+ 字符的字母数字字符串）
+    $message = preg_replace('/\b[a-zA-Z0-9]{30,}\b/u', '[request_id]', $message);
+
+    // Step 5: 移除 JSON 内的敏感字段片段（保留简要内容）
+    // 移除 request_id 值
+    $message = preg_replace('/"request[_\s]?id"\s*:\s*"[^"]+"/i', '[request_id]', $message);
+
+    // Step 6: 合并多余空格
+    $message = preg_replace('/\s+/', ' ', $message);
+    $message = trim($message);
+
+    return $message;
+}
+
+/**
+ * 生成 API 响应的可读摘要，用于日志和错误消息。
+ * 移除不可见字符和乱码片段，只保留可读文本。
+ */
+function generation_response_excerpt(string $raw): string
+{
     $text = preg_replace('/\s+/', ' ', trim(strip_tags($raw)));
-
     $text = is_string($text) ? $text : trim($raw);
-
     if ($text === '') {
-
         return 'empty content';
-
     }
-
+    // 移除不可见字符和乱码片段
+    $text = sanitize_error_message_for_log($text);
+    if ($text === '') {
+        return 'empty content';
+    }
     if (function_exists('mb_substr')) {
-
         return mb_substr($text, 0, 300, 'UTF-8');
-
     }
-
     return substr($text, 0, 300);
-
 }
 
 
@@ -4554,7 +4644,7 @@ function store_image_generation_data(int $recordId, array $data, array $record):
 
              finished_at = NOW(), error_message = NULL
 
-         WHERE id = ?"
+         WHERE id = ? AND status = 'running'"
 
     );
 
@@ -4785,18 +4875,19 @@ function record_generation_refund_log(PDO $pdo, array $record, int $refundAmount
         'INSERT INTO credit_logs (user_id, amount, balance_before, balance_after, type, source, ref_type, ref_id, admin_id, reason, ip_address, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NOW())'
     );
-    $insert->execute([
-        $userId,
-        $refundAmount,
-        $balanceBefore,
-        $balanceAfter,
-        'refund',
-        'generation_failure',
-        'generation_record_refund',
-        (string) $recordId,
-        mb_substr('生成失败退款：' . $message, 0, 255, 'UTF-8'),
-        '127.0.0.1',
-    ]);
+        $cleanMsg = sanitize_error_message_for_log($message);
+        $insert->execute([
+            $userId,
+            $refundAmount,
+            $balanceBefore,
+            $balanceAfter,
+            'refund',
+            'generation_failure',
+            'generation_record_refund',
+            (string) $recordId,
+            mb_substr('生成失败退款：' . $cleanMsg, 0, 255, 'UTF-8'),
+            '127.0.0.1',
+        ]);
 }
 
 function record_upstream_cost_loss(PDO $pdo, array $record, string $message): void
@@ -4860,7 +4951,7 @@ function refund_generation_failure(PDO $pdo, int $recordId, string $errorMsg, st
 
              SET status = 'failed', credits_cost = 0, error_message = ?, finished_at = NOW()
 
-             WHERE id = ?"
+             WHERE id = ? AND status = 'running'"
 
         );
 
@@ -4963,7 +5054,7 @@ function claim_next_generation_record(): ?int
 
              SET status = 'running', started_at = NOW(), error_message = NULL
 
-             WHERE id = ?"
+             WHERE id = ? AND status = 'running'"
 
         );
 
@@ -5351,11 +5442,11 @@ function fail_generation_record_with_refund(int $recordId, string $message): boo
 
              SET status = 'failed', credits_cost = 0, error_message = ?, finished_at = NOW()
 
-             WHERE id = ?"
+             WHERE id = ? AND status = 'running'"
 
         );
 
-        $stmt->execute([$message, $recordId]);
+        $stmt->execute([sanitize_error_message_for_log($message), $recordId]);
 
         $record['credits_cost'] = 0;
         record_generation_refund_log($pdo, $record, $refundAmount, $message);
