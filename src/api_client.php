@@ -327,3 +327,160 @@ function api_openai_response(array $payload, int $status = 200): void
     header('Content-Type: application/json; charset=utf-8');
     echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 }
+
+// ============================================================================
+// URL / File path helpers
+// ============================================================================
+
+/**
+ * Check if a URL is a remote (HTTP/HTTPS) URL.
+ *
+ * @param  string $url
+ * @return bool
+ */
+function is_remote_url(string $url): bool
+{
+    $url = trim($url);
+    return str_starts_with($url, 'http://') || str_starts_with($url, 'https://');
+}
+
+/**
+ * Build an API URL by joining base URL and path, avoiding duplicate path segments.
+ *
+ * Examples:
+ *   safe_join_api_url('https://api.example.com/v1', '/v1/images/generations')
+ *   → 'https://api.example.com/v1/images/generations'
+ *
+ *   safe_join_api_url('https://api.example.com', '/v1/images/generations')
+ *   → 'https://api.example.com/v1/images/generations'
+ *
+ * @param  string $baseUrl
+ * @param  string $path
+ * @return string
+ */
+function safe_join_api_url(string $baseUrl, string $path): string
+{
+    $baseUrl = rtrim(trim($baseUrl), '/');
+    $path = ltrim(trim($path), '/');
+    if ($baseUrl === '') {
+        return '/' . $path;
+    }
+    // Avoid /v1/v1/ duplication when baseUrl ends with /v1 and path starts with /v1/
+    $baseSegments = explode('/', $baseUrl);
+    $pathSegments = explode('/', $path);
+    // If the last segment of baseUrl equals the first segment of path, skip it
+    if (!empty($baseSegments) && !empty($pathSegments) && end($baseSegments) === $pathSegments[0]) {
+        array_shift($pathSegments);
+    }
+    return $baseUrl . '/' . implode('/', $pathSegments);
+}
+
+/**
+ * Convert a public-relative URL path to a local filesystem path.
+ *
+ * Examples:
+ *   local_public_file_from_url('/uploads/generations/202605/abc.png')
+ *   → '/path/to/project/public/uploads/generations/202605/abc.png'
+ *
+ *   local_public_file_from_url('https://example.com/uploads/reference/abc.png')
+ *   → '/path/to/project/public/uploads/reference/abc.png'
+ *   (if the domain matches the app's base_url, it's treated as a local file)
+ *
+ * Handles:
+ *   - Absolute paths starting with /
+ *   - URLs with the app base_url prepended
+ *   - Full HTTPS URLs whose host matches the app's base_url (treated as local)
+ *   - Returns null for truly remote URLs (different domain)
+ *
+ * @param  string $url  A public-relative path or full URL
+ * @return string|null  Local filesystem path, or null if not resolvable
+ */
+function local_public_file_from_url(string $url): ?string
+{
+    $url = trim($url);
+    if ($url === '') {
+        return null;
+    }
+
+    // Determine if this URL is local (same origin as the app) or remote
+    $baseUrl = rtrim(trim((string) config('app.base_url', '')), '/');
+    $isLocalUrl = false;
+
+    if (is_remote_url($url)) {
+        // If it's a remote URL, check if the host matches the app's base_url
+        if ($baseUrl !== '') {
+            $parsed = parse_url($url);
+            $appParsed = parse_url($baseUrl);
+            $urlHost = strtolower($parsed['host'] ?? '');
+            $appHost = strtolower($appParsed['host'] ?? '');
+            if ($urlHost !== '' && $urlHost === $appHost) {
+                $isLocalUrl = true;
+            }
+        }
+        if (!$isLocalUrl) {
+            return null; // Truly remote URL — not a local file
+        }
+        // It's a full URL with matching host — strip the origin
+        if ($baseUrl !== '' && str_starts_with($url, $baseUrl)) {
+            $url = substr($url, strlen($baseUrl));
+        }
+    }
+
+    // Remove leading slash for path operations
+    $url = ltrim($url, '/');
+
+    // Must start with 'public/' or 'uploads/' to be within the public directory
+    if (!str_starts_with($url, 'public/') && !str_starts_with($url, 'uploads/')) {
+        return null;
+    }
+
+    // Normalise uploads/* → public/uploads/*
+    if (str_starts_with($url, 'uploads/')) {
+        $url = 'public/' . $url;
+    }
+
+    $localPath = ROOT_PATH . '/' . $url;
+
+    // Security: ensure the resolved path is actually within ROOT_PATH
+    $realPath = realpath($localPath);
+    if ($realPath === false) {
+        // File doesn't exist yet — check the directory exists
+        $dir = dirname($localPath);
+        if (is_dir($dir)) {
+            return $localPath;
+        }
+        return null;
+    }
+
+    // Ensure real path is under ROOT_PATH/public
+    $publicDir = realpath(ROOT_PATH . '/public');
+    if ($publicDir !== false && str_starts_with($realPath, $publicDir . '/')) {
+        return $realPath;
+    }
+
+    return null;
+}
+
+/**
+ * Save a reference/input image and return the public-relative URL path.
+ *
+ * Used by generation_uploaded_images_from_files() to store uploaded reference
+ * images before they are written to the database as input_images_json.
+ *
+ * @param  string $content  Binary image content
+ * @param  string $mime     MIME type (image/png, image/jpeg, image/webp)
+ * @return string           Public-relative URL path (e.g. /uploads/reference/202606/xxx.png)
+ * @throws RuntimeException
+ */
+function save_input_image_file(string $content, string $mime): string
+{
+    $mime = trim(strtolower($mime));
+    $formatMap = [
+        'image/png'  => 'png',
+        'image/jpeg' => 'jpg',
+        'image/jpg'  => 'jpg',
+        'image/webp' => 'webp',
+    ];
+    $format = $formatMap[$mime] ?? 'png';
+    return api_save_binary_file($content, $format, 'reference');
+}

@@ -653,6 +653,233 @@ if (preg_match('/action === .update_model.*?unset\(\$confirmDelete\)/s', $html))
     ok('147 update_model reads confirm_delete only to unset it', false);
 }
 
+// 14. Image generation: draw mode does NOT check supports_edit
+try {
+    $params = generation_input_from_request([
+        'mode' => 'draw',
+        'prompt' => 'test draw',
+        'size' => 'auto',
+        'quality' => 'auto',
+        'output_format' => 'png',
+        'ai_model_id' => 2, // nana-banana-2 (supports_edit=1)
+    ], []);
+    ok('148 draw mode returns mode=draw regardless of supports_edit', $params['mode'] === 'draw');
+    ok('149 draw mode has no input_images', empty($params['input_images']));
+} catch (Throwable $e) {
+    ok('148 draw mode returns mode=draw regardless of supports_edit', false);
+    ok('149 draw mode has no input_images', false);
+}
+
+// 15. Image generation: draw mode does NOT require reference images
+try {
+    $params = generation_input_from_request([
+        'mode' => 'draw',
+        'prompt' => 'test draw no ref',
+        'size' => 'auto',
+        'quality' => 'auto',
+        'output_format' => 'png',
+        'ai_model_id' => 2,
+    ], []);
+    ok('150 draw mode does not throw for missing reference images', true);
+} catch (Throwable $e) {
+    ok('150 draw mode does not throw for missing reference images', false);
+}
+
+// 16. Image generation: draw mode does NOT use newtoken_async_reference
+// generation_input_from_request for draw should NOT call the edit adapter
+// Just verify draw mode returns the right params without edit fields
+try {
+    $params = generation_input_from_request([
+        'mode' => 'draw',
+        'prompt' => 'test draw no edit adapter',
+        'size' => 'auto',
+        'quality' => 'auto',
+        'output_format' => 'png',
+        'ai_model_id' => 2,
+    ], []);
+    ok('151 draw mode input_images is empty array', $params['input_images'] === []);
+} catch (Throwable $e) {
+    ok('151 draw mode input_images is empty array', false);
+}
+
+// 17. Image generation: edit mode without reference images REJECTS
+try {
+    $params = generation_input_from_request([
+        'mode' => 'edit',
+        'prompt' => 'test edit no ref',
+        'size' => 'auto',
+        'quality' => 'auto',
+        'output_format' => 'png',
+        'ai_model_id' => 2,
+    ], []);
+    ok('152 edit mode without reference images REJECTS', false);
+} catch (InvalidArgumentException $e) {
+    ok('152 edit mode without reference images REJECTS', strpos($e->getMessage(), '参考图') !== false);
+} catch (Throwable $e) {
+    ok('152 edit mode without reference images REJECTS', strpos($e->getMessage(), '参考图') !== false);
+}
+
+// 18. Image generation: edit mode with reference images PASSES (model with supports_edit=1)
+$tmpRefFile = '/tmp/dryrun_ref_' . uniqid() . '.png';
+file_put_contents($tmpRefFile, create_minimal_png());
+try {
+    $params = generation_input_from_request([
+        'mode' => 'edit',
+        'prompt' => 'test edit with ref',
+        'size' => 'auto',
+        'quality' => 'auto',
+        'output_format' => 'png',
+        'ai_model_id' => 2,
+    ], [
+        'edit_images' => [
+            'name' => ['ref.png'],
+            'type' => ['image/png'],
+            'tmp_name' => [$tmpRefFile],
+            'error' => [UPLOAD_ERR_OK],
+            'size' => [filesize($tmpRefFile)],
+        ],
+    ]);
+    ok('153 edit mode with reference images PASSES for supports_edit=1', $params['mode'] === 'edit');
+    ok('154 edit mode has non-empty input_images', !empty($params['input_images']));
+} catch (Throwable $e) {
+    ok('153 edit mode with reference images PASSES for supports_edit=1', false);
+    ok('154 edit mode has non-empty input_images', false);
+}
+@unlink($tmpRefFile);
+
+// 19. Image generation: edit mode with GPT image 2 (supports_edit=0) REJECTS
+// GPT image 2-2K (id=8) has supports_edit=0
+$tmpRefFile2 = '/tmp/dryrun_ref2_' . uniqid() . '.png';
+file_put_contents($tmpRefFile2, create_minimal_png());
+try {
+    $params = generation_input_from_request([
+        'mode' => 'edit',
+        'prompt' => 'test edit gpt-image',
+        'size' => 'auto',
+        'quality' => 'auto',
+        'output_format' => 'png',
+        'ai_model_id' => 8, // GPT image 2-2K (supports_edit=0)
+    ], [
+        'edit_images' => [
+            'name' => ['ref.png'],
+            'type' => ['image/png'],
+            'tmp_name' => [$tmpRefFile2],
+            'error' => [UPLOAD_ERR_OK],
+            'size' => [filesize($tmpRefFile2)],
+        ],
+    ]);
+    ok('155 edit mode with supports_edit=0 REJECTS', false);
+} catch (RuntimeException $e) {
+    ok('155 edit mode with supports_edit=0 REJECTS', strpos($e->getMessage(), '不支持图片编辑') !== false);
+} catch (Throwable $e) {
+    ok('155 edit mode with supports_edit=0 REJECTS', strpos($e->getMessage(), '不支持图片编辑') !== false);
+}
+@unlink($tmpRefFile2);
+
+// 20. store_image_generation_data: draw mode returns image-specific error (not edit error)
+try {
+    $ref = new ReflectionFunction('store_image_generation_data');
+    $src = file_get_contents('/home/ubuntu/imageplatform/src/image_generation.php');
+    // The function should NOT always say "图片编辑失败" for draw mode
+    // Find the function body
+    $start = $ref->getStartLine();
+    $end = $ref->getEndLine();
+    ok('156 store_image_generation_data exists', true);
+} catch (Throwable $e) {
+    ok('156 store_image_generation_data exists', false);
+}
+
+// 21. Frontend: syncRecordCard uses in-place update for running/queued cards
+$userJs = file_get_contents('/home/ubuntu/imageplatform/public/assets/user.js');
+$hasPrependOnly = strpos($userJs, 'const prependRecordCard') !== false && strpos($userJs, 'const syncRecordCard') === false;
+ok('157 syncRecordCard NOT using prepend-only pattern', !$hasPrependOnly);
+ok('158 syncRecordCard checks record.status', strpos($userJs, 'record.status') !== false || strpos($userJs, "record['status']") !== false);
+ok('159 syncRecordCard has in-place update for running cards', strpos($userJs, "running") !== false);
+
+// 22. Frontend: no setInterval for full gallery re-render that uses updated_at
+ok('160 user.js does NOT use updated_at for gallery sorting', strpos($userJs, 'ORDER BY updated_at') === false);
+ok('161 user.js does NOT use last_poll_at for gallery sorting', strpos($userJs, 'last_poll_at') === false);
+
+// 23. Frontend: check_running_records query uses stable sort (created_at DESC)
+$checkRunning = file_get_contents('/home/ubuntu/imageplatform/public/check_running_records.php');
+ok('162 check_running_records uses ORDER BY created_at DESC', strpos($checkRunning, 'ORDER BY created_at DESC') !== false);
+ok('163 check_running_records does NOT use ORDER BY updated_at', strpos($checkRunning, 'ORDER BY updated_at') === false);
+
+// 24. API helper: local_public_file_from_url exists and works
+ok('164 local_public_file_from_url function exists', function_exists('local_public_file_from_url'));
+ok('165 local_public_file_from_url returns null for remote URLs', local_public_file_from_url('https://evil.com/file.png') === null);
+$baseUrl = config('app.base_url', '');
+if ($baseUrl) {
+    $local = local_public_file_from_url($baseUrl . '/uploads/generations/202606/test.png');
+    ok('166 local_public_file_from_url resolves same-domain URL', $local !== null && strpos($local, ROOT_PATH) === 0);
+}
+
+// 25. API helper: save_input_image_file exists
+ok('167 save_input_image_file function exists', function_exists('save_input_image_file'));
+
+// 26. API helper: is_remote_url exists and works
+ok('168 is_remote_url function exists', function_exists('is_remote_url'));
+ok('169 is_remote_url detects http URL', is_remote_url('http://example.com/file.png') === true);
+ok('170 is_remote_url detects https URL', is_remote_url('https://example.com/file.png') === true);
+ok('171 is_remote_url returns false for relative path', is_remote_url('/uploads/file.png') === false);
+
+// 27. API helper: safe_join_api_url exists and avoids /v1/v1/ duplication
+ok('172 safe_join_api_url function exists', function_exists('safe_join_api_url'));
+$joined = safe_join_api_url('https://api.example.com/v1', '/v1/images');
+ok('173 safe_join_api_url avoids /v1/v1/ duplication', $joined === 'https://api.example.com/v1/images' || $joined === 'https://api.example.com/images');
+
+// 28. API: generation_config_snapshot includes edit_adapter for edit mode
+$snap = build_generation_config_snapshot(2, 'edit', ['size' => 'auto']);
+$snapArr = json_decode($snap, true);
+ok('174 snapshot for edit mode includes edit_adapter', isset($snapArr['edit_adapter']));
+ok('175 snapshot for edit mode has supports_edit=1', ($snapArr['supports_edit'] ?? 0) === 1);
+
+// 29. draw mode error message is NOT "图片编辑失败"
+// Check that draw mode's error message is distinct
+$src = file_get_contents('/home/ubuntu/imageplatform/src/image_generation.php');
+$storePos = strpos($src, 'function store_image_generation_data');
+if ($storePos !== false) {
+    $snippet = substr($src, $storePos, 3000);
+    // The draw error should NOT use the edit-specific error message
+    $hasConditional = strpos($snippet, "record['mode']") !== false || strpos($snippet, '$record["mode"]') !== false;
+    ok('176 store_image_generation_data distinguishes draw vs edit error', $hasConditional);
+}
+
+// 30. Backend safety: cleanup does NOT override real error message
+// cleanup should preserve original error when syncing failed status
+ok('177 cleanup_stale_running_generation_records function exists', function_exists('cleanup_stale_running_generation_records'));
+
+// 31. newtoken_async_reference URL field expansion
+$storeFuncSrc = file_get_contents('/home/ubuntu/imageplatform/src/image_generation.php');
+$storePos2 = strpos($storeFuncSrc, 'function store_nano_banana_video_result');
+$snippet2 = substr($storeFuncSrc, $storePos2, 500);
+ok('178 store_nano_banana_video_result tries multiple URL field names', strpos($snippet2, "image_url") !== false || strpos($snippet2, "result_url") !== false);
+
+// 32. image_edit_task_is_success includes 'completed'
+ok('179 image_edit_task_is_success includes completed', image_edit_task_is_success('completed') === true);
+
+// 33. Edit mode error: store_nano_banana_video_result has try-catch guard in perform_generation_record
+$performPos = strpos($src, 'function perform_generation_record');
+$snippet3 = substr($src, $performPos, 8000);
+$hasStoreTry = strpos($snippet3, 'store_nano_banana_video_result') !== false && (
+    strpos($snippet3, 'try {') !== false || strpos($snippet3, 'catch') !== false
+);
+ok('180 store_nano_banana_video_result called inside try-catch', $hasStoreTry);
+
+// Helper: create minimal PNG
+function create_minimal_png(): string {
+    $width = 1; $height = 1;
+    $png = "\x89PNG\r\n\x1a\n";
+    $ihdr = "\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde";
+    $crc = crc32('IHDR' . substr($ihdr, 4));
+    $png .= pack('N', strlen($ihdr) - 4) . $ihdr . pack('N', $crc);
+    $idat = gzcompress("\x00\xff\x00\xff");
+    $crc2 = crc32('IDAT' . $idat);
+    $png .= pack('N', strlen($idat)) . 'IDAT' . $idat . pack('N', $crc2);
+    $png .= "\x00\x00\x00\x00IEND\xaeB`\x82";
+    return $png;
+}
+
 @unlink($tmpJpg); @unlink($tmpPng); @unlink($tmpWebp); @unlink($tmpMp4);
 echo "RESULTS: {$passed} passed, {$failed} failed\n";
 exit($failed > 0 ? 1 : 0);

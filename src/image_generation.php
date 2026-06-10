@@ -1763,12 +1763,22 @@ function retrieve_image_edit_task_result(int $recordId): array
  */
 function store_nano_banana_video_result(int $recordId, array $pollData, array $record): void
 {
-    $videoUrl = $pollData['video_url'] ?? $pollData['url'] ?? null;
+    // Try multiple common URL field names for both video and image results
+    $videoUrl = $pollData['video_url']
+        ?? $pollData['url']
+        ?? $pollData['image_url']
+        ?? $pollData['result_url']
+        ?? $pollData['output_url']
+        ?? $pollData['data']['url']
+        ?? $pollData['data']['video_url']
+        ?? $pollData['data']['image_url']
+        ?? $pollData['image']['url']
+        ?? null;
 
     if (!is_string($videoUrl) || $videoUrl === '' || !filter_var($videoUrl, FILTER_VALIDATE_URL)) {
         $status = $pollData['status'] ?? 'unknown';
         Logger::warning('NANO_BANANA_NO_VIDEO_URL', ['record_id' => $recordId, 'status' => $status, 'keys' => array_keys($pollData)]);
-        throw new RuntimeException("Nano Banana 任务已完成（status={$status}），但未返回结果 URL。");
+        throw new RuntimeException("Nano Banana 任务已完成（status={$status}），但未返回图片或视频结果地址。可能当前模型在图片编辑模式下不支持该端点，或上游平台返回格式不兼容。");
     }
 
     $saved = save_nano_banana_video_file($videoUrl, $recordId);
@@ -3953,7 +3963,7 @@ function store_image_generation_data(int $recordId, array $data, array $record):
 
         Logger::info('IMAGE_API_NO_DATA', ['raw_keys' => array_keys($data), 'sample' => substr(json_encode($data, JSON_UNESCAPED_UNICODE), 0, 500)]);
 
-        throw new RuntimeException('图片编辑失败：参考图未被接口识别，或当前模型不支持图片编辑。请重新上传参考图，或切换到绘画模式。');
+        throw new RuntimeException(($record['mode'] ?? 'draw') === 'edit' ? '图片编辑失败：参考图未被接口识别，或当前模型不支持图片编辑。请重新上传参考图，或切换到绘画模式。' : '图片生成接口未返回有效图片数据，请稍后重试或联系管理员。');
 
     }
 
@@ -4046,7 +4056,7 @@ function store_image_generation_data(int $recordId, array $data, array $record):
     } else {
 
         throw new RuntimeException(
-            '图片编辑失败：参考图未被接口识别，或当前模型不支持图片编辑。请重新上传参考图，或切换到绘画模式。可用字段：' . $availableKeys . '。'
+            (($record['mode'] ?? 'draw') === 'edit' ? '图片编辑失败：参考图未被接口识别，或当前模型不支持图片编辑。请重新上传参考图，或切换到绘画模式。' : '图片生成接口未返回有效图片数据，请稍后重试或联系管理员。') . ' 可用字段：' . $availableKeys . '。'
         );
 
     }
@@ -4210,8 +4220,7 @@ function perform_generation_record(int $recordId, ?int $timeout = null): array
         // 轮询完成后，从记录中获取结果
         $result = retrieve_image_edit_task_result($qe->recordId);
         Logger::info('NANO_BANANA_RETRIEVE', ['record_id' => $qe->recordId, 'result_keys' => array_keys($result)]);
-        store_nano_banana_video_result($qe->recordId, $result, $record);
-        return generation_record_by_id($qe->recordId);
+        try { store_nano_banana_video_result($qe->recordId, $result, $record); return generation_record_by_id($qe->recordId); } catch (RuntimeException $storeEx) { $pdo3 = db(); $err3 = $storeEx->getMessage(); $stmt3 = $pdo3->prepare("UPDATE generation_records SET status = 'failed', error_message = ?, updated_at = NOW() WHERE id = ? AND status = 'running'"); $stmt3->execute([$err3, $qe->recordId]); throw $storeEx; }
     } catch (Throwable $e) {
 
         refund_generation_failure($pdo, $recordId, $e->getMessage(), 'RECOVERY_FAILED');

@@ -207,20 +207,103 @@ const createRecordCard = (record) => {
   return article;
 };
 
-const prependRecordCard = (record) => {
-  if (!historyList) return;
-  const existing = historyList.querySelector(`[data-record-id="${record.id}"]`);
-  if (existing) existing.remove();
-  const empty = historyList.querySelector(".history-empty-inline");
-  if (empty) empty.remove();
-  const card = createRecordCard(record);
-  historyList.prepend(card);
-};
-
+/**
+ * Update or insert a record card.
+ * For running/queued cards: update DOM in-place without reordering
+ * to prevent visible position flickering during polling.
+ * For succeeded/failed/new cards: prepend to top of list.
+ */
 const syncRecordCard = (record) => {
   if (!record || !record.id) return null;
-  prependRecordCard(record);
-  return historyList?.querySelector(`[data-record-id="${record.id}"]`) || null;
+  const existing = historyList?.querySelector(`[data-record-id="${record.id}"]`);
+  const isTransient = record.status === 'queued' || record.status === 'running';
+
+  if (existing && isTransient) {
+    // In-place update: only update status badge, image/video src, error, credits
+    // Do NOT remove/reinsert — that causes visible position swaps during polling
+    const card = existing;
+    card.dataset.status = record.status || 'succeeded';
+    card.dataset.error = record.error_message || '';
+    card.dataset.credits = record.credits_charged || 0;
+
+    const badge = card.querySelector('.status-badge');
+    if (badge) {
+      badge.className = `status-badge ${record.status || 'succeeded'}`;
+      badge.textContent = statusText(record.status);
+    }
+
+    const meta = card.querySelector('.meta');
+    if (meta) {
+      const metaSpan = meta.querySelector('span:last-child');
+      if (metaSpan) {
+        // Update only the params part, keep the badge label
+        const modeLabel = record.mode === 'edit' ? '编辑' : (record.mode === 'video' ? '视频' : '绘画');
+        const aspect = record.selected_aspect || '—';
+        const size = record.size || 'auto';
+        const parts = [modeLabel];
+        if (aspect && aspect !== '—') parts.push(aspect);
+        parts.push(size);
+        metaSpan.textContent = parts.join(' / ');
+      }
+    }
+
+    // Update image/video source
+    if (record.video_src) {
+      let videoEl = card.querySelector('video');
+      if (!videoEl) {
+        const placeholder = card.querySelector('div[style*="aspect-ratio"]');
+        if (placeholder) {
+          const vd = document.createElement('video');
+          vd.src = record.video_src;
+          vd.controls = true;
+          placeholder.replaceWith(vd);
+        }
+      } else {
+        videoEl.src = record.video_src;
+      }
+    } else if (record.image_src || record.output_url) {
+      const src = record.image_src || record.output_url || '';
+      let imgEl = card.querySelector('img');
+      if (!imgEl) {
+        const placeholder = card.querySelector('div[style*="aspect-ratio"]');
+        if (placeholder) {
+          const im = document.createElement('img');
+          im.src = src;
+          im.alt = '生成图片';
+          placeholder.replaceWith(im);
+        }
+      } else {
+        imgEl.src = src;
+      }
+    }
+
+    // Update error display
+    const errorDiv = card.querySelector('.error-hint');
+    if (record.error_message) {
+      if (!errorDiv) {
+        const err = document.createElement('div');
+        err.className = 'error-hint';
+        err.style.cssText = 'font-size:10px;color:var(--danger);margin-top:4px;';
+        err.textContent = (record.error_message || '').substring(0, 60);
+        const body = card.querySelector('.media-card-body');
+        if (body) body.appendChild(err);
+      } else {
+        errorDiv.textContent = (record.error_message || '').substring(0, 60);
+      }
+    } else if (errorDiv) {
+      errorDiv.remove();
+    }
+
+    return card;
+  }
+
+  // For succeeded, failed, or new cards: remove existing and prepend
+  if (existing) existing.remove();
+  const empty = historyList?.querySelector('.history-empty-inline');
+  if (empty) empty.remove();
+  const card = createRecordCard(record);
+  historyList?.prepend(card);
+  return card;
 };
 
 const refreshOpenRecordDialog = (record) => {
