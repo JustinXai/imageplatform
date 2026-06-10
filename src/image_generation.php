@@ -4214,7 +4214,7 @@ function image_api_decode_response(array $apiResponse): array
 
             'http_code'        => $httpCode,
 
-            'sanitized_url'    => '(URL 宸茶劚鏁?',
+            'sanitized_url'    => '(URL已隐藏)',
 
             'content_type'      => $contentType,
 
