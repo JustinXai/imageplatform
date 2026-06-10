@@ -23,6 +23,237 @@ class ImageEditTaskQueuedException extends Exception
 
 require_once __DIR__ . '/api_client.php';
 
+/**
+ * NewToken 异步模型规格矩阵。
+ * 所有模型统一走 POST /v1/videos 和 GET /v1/videos/{task_id}。
+ *
+ * 字段说明：
+ *   kind              image | video
+ *   endpoint          提交端点
+ *   prompt_field     prompt 参数名（固定 "prompt"）
+ *   aspect_field     比例参数名
+ *   duration_field   时长参数名（视频用）
+ *   primary_image_field   单张主参考图参数名（video-pro: image_url, sora-2: image）
+ *   reference_field  多张参考图参数名（nana: images, gpt-image-2: image_urls, veo: Ingredients_images）
+ *   extra_images_field   额外参考图（video-pro: extra_images）
+ *   extra_videos_field   额外参考视频（video-pro: extra_videos）
+ *   extra_audios_field   额外参考音频（video-pro: extra_audios）
+ *   video_field          参考视频参数名（veo-video-edit: video_url）
+ *   result_fields    结果 URL 字段优先级列表
+ *   supports_draw        是否支持纯文生图
+ *   supports_reference   是否支持参考图模式
+ *   supports_edit        是否支持编辑模式（需要参考图）
+ *   max_reference_images 最多参考图数（0 = 无上限）
+ *   max_reference_videos 最多参考视频数（0 = 无上限）
+ *   resolution_options   可选分辨率（Nana 用，1k/2k）
+ *   duration_options     可选时长列表（视频用）
+ *   default_duration     默认时长（视频用，固定值时可不传）
+ *   supports_sync        是否支持同步返回（目前全部 false）
+ */
+define('NEWTOKEN_MODEL_SPECS', [
+    // =====================================================================
+    // 图片模型
+    // =====================================================================
+
+    'gpt-image-2-1K' => [
+        'kind' => 'image',
+        'endpoint' => '/v1/videos',
+        'prompt_field' => 'prompt',
+        'aspect_field' => 'aspect_ratio',
+        'reference_field' => 'image_urls',
+        'result_fields' => ['image_url', 'url', 'metadata.result_urls'],
+        'supports_draw' => true,
+        'supports_reference' => true,
+        'supports_edit' => false,          // 产品上叫"参考图生成"，不放编辑 tab
+        'max_reference_images' => 10,
+    ],
+    'gpt-image-2-2K' => [
+        'kind' => 'image',
+        'endpoint' => '/v1/videos',
+        'prompt_field' => 'prompt',
+        'aspect_field' => 'aspect_ratio',
+        'reference_field' => 'image_urls',
+        'result_fields' => ['image_url', 'url', 'metadata.result_urls'],
+        'supports_draw' => true,
+        'supports_reference' => true,
+        'supports_edit' => false,
+        'max_reference_images' => 10,
+    ],
+    'gpt-image-2-4K' => [
+        'kind' => 'image',
+        'endpoint' => '/v1/videos',
+        'prompt_field' => 'prompt',
+        'aspect_field' => 'aspect_ratio',
+        'reference_field' => 'image_urls',
+        'result_fields' => ['image_url', 'url', 'metadata.result_urls'],
+        'supports_draw' => true,
+        'supports_reference' => true,
+        'supports_edit' => false,
+        'max_reference_images' => 10,
+    ],
+
+    'nana-banana-2' => [
+        'kind' => 'image',
+        'endpoint' => '/v1/videos',
+        'prompt_field' => 'prompt',
+        'aspect_field' => 'aspect_ratio',
+        'reference_field' => 'images',
+        'resolution_field' => 'resolution',
+        'resolution_options' => ['1k', '2k'],
+        'result_fields' => ['image_url', 'url', 'metadata.result_urls'],
+        'supports_draw' => true,
+        'supports_reference' => true,
+        'supports_edit' => true,
+        'max_reference_images' => 10,
+    ],
+    'nana-banana-pro' => [
+        'kind' => 'image',
+        'endpoint' => '/v1/videos',
+        'prompt_field' => 'prompt',
+        'aspect_field' => 'aspect_ratio',
+        'reference_field' => 'images',
+        'resolution_field' => 'resolution',
+        'resolution_options' => ['1k', '2k'],
+        'result_fields' => ['image_url', 'url', 'metadata.result_urls'],
+        'supports_draw' => true,
+        'supports_reference' => true,
+        'supports_edit' => true,
+        'max_reference_images' => 10,
+    ],
+
+    // =====================================================================
+    // 视频模型
+    // =====================================================================
+
+    'video-pro-720p' => [
+        'kind' => 'video',
+        'endpoint' => '/v1/videos',
+        'prompt_field' => 'prompt',
+        'duration_field' => 'duration',
+        'aspect_field' => 'aspect_ratio',
+        'primary_image_field' => 'image_url',
+        'extra_images_field' => 'extra_images',
+        'extra_videos_field' => 'extra_videos',
+        'extra_audios_field' => 'extra_audios',
+        'result_fields' => ['video_url', 'url'],
+        'supports_draw' => true,
+        'supports_reference' => false,
+        'supports_edit' => false,
+        'duration_options' => [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        'default_duration' => 6,
+        'max_reference_images' => 0,
+    ],
+
+    'sora-2' => [
+        'kind' => 'video',
+        'endpoint' => '/v1/videos',
+        'prompt_field' => 'prompt',
+        'duration_field' => 'duration',
+        'aspect_field' => 'aspect_ratio',
+        'primary_image_field' => 'image',
+        'result_fields' => ['video_url', 'url'],
+        'supports_draw' => true,
+        'supports_reference' => false,
+        'supports_edit' => false,
+        'duration_options' => [12],
+        'default_duration' => 12,
+        'max_reference_images' => 1,   // 单张主参考图用 primary_image_field
+    ],
+
+    'veo-omni-flash' => [
+        'kind' => 'video',
+        'endpoint' => '/v1/videos',
+        'prompt_field' => 'prompt',
+        'duration_field' => 'duration',
+        'aspect_field' => 'aspect_ratio',
+        'reference_field' => 'ingredients_images',
+        'result_fields' => ['video_url', 'url'],
+        'supports_draw' => true,
+        'supports_reference' => true,
+        'supports_edit' => false,
+        'duration_options' => [10],
+        'default_duration' => 10,
+        'max_reference_images' => 6,
+    ],
+
+    'veo-omni-flash-video-edit' => [
+        'kind' => 'video',
+        'endpoint' => '/v1/videos',
+        'prompt_field' => 'prompt',
+        'duration_field' => 'duration',
+        'aspect_field' => 'aspect_ratio',
+        'video_field' => 'video_url',
+        'reference_field' => 'ingredients_images',
+        'result_fields' => ['video_url', 'url'],
+        'supports_draw' => false,
+        'supports_reference' => true,
+        'supports_edit' => false,
+        'duration_options' => [10],
+        'default_duration' => 10,
+        'max_reference_images' => 6,
+        'max_reference_videos' => 1,
+        'requires_video' => true,
+    ],
+]);
+
+/**
+ * 根据 model_id 查找 NEWTOKEN_MODEL_SPECS 规格。
+ */
+function newtoken_model_spec(string $modelId): ?array
+{
+    return NEWTOKEN_MODEL_SPECS[$modelId] ?? null;
+}
+
+/**
+ * 判断是否为 NewToken 异步模型。
+ */
+function is_newtoken_async_model(string $modelId): bool
+{
+    return array_key_exists($modelId, NEWTOKEN_MODEL_SPECS);
+}
+
+/**
+ * 获取图片类模型规格（kind === 'image'）。
+ */
+function newtoken_image_specs(): array
+{
+    return array_filter(NEWTOKEN_MODEL_SPECS, fn(array $s) => ($s['kind'] ?? '') === 'image');
+}
+
+/**
+ * 获取视频类模型规格（kind === 'video'）。
+ */
+function newtoken_video_specs(): array
+{
+    return array_filter(NEWTOKEN_MODEL_SPECS, fn(array $s) => ($s['kind'] ?? '') === 'video');
+}
+
+/**
+ * 判断模型是否支持指定模式。
+ */
+function newtoken_model_supports_mode(string $modelId, string $mode): bool
+{
+    $spec = newtoken_model_spec($modelId);
+    if ($spec === null) {
+        return false;
+    }
+    return match ($mode) {
+        'draw' => ($spec['supports_draw'] ?? false),
+        'reference' => ($spec['supports_reference'] ?? false),
+        'edit' => ($spec['supports_edit'] ?? false),
+        default => false,
+    };
+}
+
+/**
+ * 获取模型支持的最多参考图数。
+ */
+function newtoken_max_reference_images(string $modelId): int
+{
+    $spec = newtoken_model_spec($modelId);
+    return (int) ($spec['max_reference_images'] ?? 0);
+}
+
 function build_generation_config_snapshot(int $modelId, string $mode, array $params = []): ?string
 {
     $mode = strtolower(trim($mode));
@@ -1791,47 +2022,9 @@ function call_image2_chat_image(string $baseUrl, string $apiKey, array $record, 
             throw new RuntimeException('图片生成失败：' . $errMsg);
         }
 
-        // 504 / 503：上游服务临时不可用，尝试重试一次（更长超时）
-        if ($httpCode === 504 || $httpCode === 503) {
-            Logger::info('IMAGE2_504_RETRY', [
-                'http_code' => $httpCode,
-                'retry_timeout' => 120,
-                'endpoint' => $endpoint,
-            ]);
-            $ch2 = curl_init($endpoint);
-            curl_setopt_array($ch2, [
-                CURLOPT_POST => true,
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_TIMEOUT => 120,
-                CURLOPT_CONNECTTIMEOUT => 20,
-                CURLOPT_HTTPHEADER => $headers,
-                CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-            ]);
-            $raw2 = curl_exec($ch2);
-            $httpCode2 = (int) curl_getinfo($ch2, CURLINFO_HTTP_CODE);
-            $curlErr2 = curl_error($ch2);
-            curl_close($ch2);
-
-            if ($curlErr2 === '' && $httpCode2 >= 200 && $httpCode2 < 300) {
-                $data2 = json_decode((string) $raw2, true);
-                if (is_array($data2)) {
-                    Logger::info('IMAGE2_504_RETRY_SUCCESS', ['http_code' => $httpCode2]);
-                    $data = $data2;
-                    $raw = $raw2;
-                    $httpCode = $httpCode2;
-                }
-            } else {
-                Logger::warning('IMAGE2_504_RETRY_FAILED', [
-                    'http_code' => $httpCode2,
-                    'curl_error' => $curlErr2,
-                ]);
-            }
-        }
-
-        // 再次检查重试后是否成功
-        if ($httpCode < 200 || $httpCode >= 300) {
-            throw new RuntimeException('图片生成失败：Image2 接口请求失败（HTTP ' . $httpCode . '）。请稍后重试。');
-        }
+        // 不重试 504/503：Image2 /v1/chat/completions 不保证幂等，
+        //盲目重试可能创建重复任务并导致双重扣费。正确流程是：failed → refund。
+        throw new RuntimeException('图片生成失败：Image2 接口请求失败（HTTP ' . $httpCode . '）。请稍后重试。');
     }
 
     if (!is_array($data)) {
@@ -2047,7 +2240,7 @@ function call_newtoken_async_reference_edit_api_submit(string $baseUrl, string $
         $stmt = $pdo->prepare(
             "UPDATE generation_records
              SET remote_task_id = ?, remote_status = ?, edit_task_id = ?, edit_task_status = ?, edit_task_response = ?, status = 'running', last_poll_at = NOW(), updated_at = NOW()
-             WHERE id = ? AND status = 'running'"
+             WHERE id = ? AND status IN ('queued','running')"
         );
         $stmt->execute([$taskId, 'queued', $taskId, 'queued', json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), $recordId]);
     }
@@ -2086,7 +2279,7 @@ function poll_image_edit_task(string $baseUrl, string $apiKey, string $taskId, i
     $pollUrlTemplate = safe_join_api_url($baseUrl, $editPollEndpoint);
     $pollUrl = str_replace('{task_id}', rawurlencode($taskId), $pollUrlTemplate);
     $startTime = time();
-    $interval = 10;
+    $interval = 5;
     $headers = ['Accept: application/json'];
     if ($authType === 'x-api-key') {
         $headers[] = 'x-api-key: ' . $apiKey;
@@ -2284,7 +2477,7 @@ function store_nano_banana_video_result(int $recordId, array $pollData, array $r
              SET status = 'succeeded', output_url = NULL, output_base64 = NULL, mime_type = NULL,
                  video_url = ?, video_mime_type = ?, remote_status = ?, edit_task_status = 'completed',
                  finished_at = NOW(), error_message = NULL, updated_at = NOW()
-             WHERE id = ? AND status = 'running'"
+             WHERE id = ? AND status IN ('queued','running')"
         );
         $stmt->execute([$publicUrl, $mime, (string) ($pollData['status'] ?? 'completed'), $recordId]);
     } else {
@@ -2293,7 +2486,7 @@ function store_nano_banana_video_result(int $recordId, array $pollData, array $r
              SET status = 'succeeded', output_url = ?, output_base64 = NULL, mime_type = ?,
                  video_url = NULL, video_mime_type = NULL, remote_status = ?, edit_task_status = 'completed',
                  finished_at = NOW(), error_message = NULL, updated_at = NOW()
-             WHERE id = ? AND status = 'running'"
+             WHERE id = ? AND status IN ('queued','running')"
         );
         $stmt->execute([$publicUrl, $mime, (string) ($pollData['status'] ?? 'completed'), $recordId]);
     }
@@ -2684,24 +2877,74 @@ function call_image_api(string $baseUrl, string $apiKey, array $record, int $tim
 
     $mode = (string) ($record['mode'] ?? 'draw');
 
-    $images = json_decode((string) ($record['input_images_json'] ?? ''), true);
-
-    $isEdit = $mode === 'edit' || (is_array($images) && $images);
-
     $invokeMode = normalize_image_invoke_mode($record['invoke_mode'] ?? 'relay');
 
-    Logger::info('CALL_IMAGE_API', ['mode' => $mode, 'isEdit' => $isEdit, 'invokeMode' => $invokeMode, 'edit_adapter' => ($record['edit_adapter'] ?? 'N/A')]);
+    $modelId = trim((string) ($record['model'] ?? ''));
 
+    Logger::info('CALL_IMAGE_API', [
+        'mode' => $mode,
+        'model' => $modelId,
+        'invokeMode' => $invokeMode,
+        'image_adapter' => ($record['image_adapter'] ?? 'N/A'),
+        'edit_adapter' => ($record['edit_adapter'] ?? 'N/A'),
+    ]);
+
+    // curl 模式：走 relay 兼容模式（不变）
     if ($invokeMode === 'curl') {
-        return $isEdit
+        return $mode === 'edit'
             ? call_image_edit_api_curl_mode($baseUrl, $apiKey, $record, $timeout)
             : call_image_generation_api_curl_mode($baseUrl, $apiKey, $record, $timeout);
     }
 
-    // 编辑模式：根据 edit_adapter 分流
+    // NewToken 异步模型统一路由（image_adapter 决定路径）
+    $imageAdapter = trim((string) ($record['image_adapter'] ?? ''));
+
+    if ($imageAdapter === 'newtoken_image2_async' || $imageAdapter === 'newtoken_banana_async') {
+        // 统一 NewToken 异步图片流程：
+        //   - draw 模式：纯文生图，不传参考图
+        //   - edit/reference 模式：传参考图字段（GPT Image 2 用 image_urls，Nana 用 images）
+        // submit → task_id → ImageEditTaskQueuedException → polling in perform_generation_record
+        return call_newtoken_image_async_submit($baseUrl, $apiKey, $record, $timeout, $imageAdapter);
+    }
+
+    // 未实现的 image_adapter
+    if (!empty($imageAdapter) && !in_array($imageAdapter, ['seedream_image', 'grok_image', 'banana_async_image', 'image2_chat_image'], true)) {
+        throw new RuntimeException('不受支持的图片适配器：' . $imageAdapter . '。请联系管理员。');
+    }
+
+    // 遗留 adapter：banana_async_image（兼容老配置）
+    if ($imageAdapter === 'banana_async_image') {
+        $submitResult = call_banana_async_image_submit($baseUrl, $apiKey, $record, $timeout);
+        $taskId = (string) ($submitResult['task_id'] ?? '');
+        if ($taskId === '') {
+            throw new RuntimeException('Banana 异步图片任务已提交，但未返回任务 ID。');
+        }
+        $submitJson = json_encode($submitResult['data'] ?? [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $recordId = (int) ($record['id'] ?? 0);
+        if ($recordId > 0) {
+            try {
+                $pdoLocal = db();
+                $stmtLocal = $pdoLocal->prepare(
+                    "UPDATE generation_records SET remote_task_id = ?, edit_task_id = ?, edit_task_status = ?, edit_task_response = ?, last_poll_at = NOW(), updated_at = NOW() WHERE id = ? AND status IN ('queued','running')"
+                );
+                $stmtLocal->execute([$taskId, $taskId, 'submitted', $submitJson, $recordId]);
+            } catch (Throwable $e) {
+                Logger::warning('BANANA_ASYNC_SUBMIT_SAVE_FAIL', ['record_id' => $recordId, 'error' => $e->getMessage()]);
+            }
+        }
+        throw new ImageEditTaskQueuedException($taskId, $submitJson, $baseUrl, $apiKey, $recordId);
+    }
+
+    // 遗留 adapter：image2_chat_image（已废弃，走 /v1/chat/completions）
+    if ($imageAdapter === 'image2_chat_image') {
+        return call_image2_chat_image($baseUrl, $apiKey, $record, $timeout);
+    }
+
+    // 编辑模式：edit_adapter 分流（仅限非 NewToken adapter 的遗留模型）
+    $images = json_decode((string) ($record['input_images_json'] ?? ''), true);
+    $isEdit = $mode === 'edit' || (is_array($images) && $images);
     if ($isEdit) {
         $editAdapter = trim((string) ($record['edit_adapter'] ?? ''));
-        Logger::info('CALL_IMAGE_API_EDIT', ['editAdapter' => $editAdapter]);
         if ($editAdapter === 'newtoken_async_reference') {
             $submitResult = call_newtoken_async_reference_edit_api_submit($baseUrl, $apiKey, $record, $timeout);
             return [
@@ -2720,38 +2963,174 @@ function call_image_api(string $baseUrl, string $apiKey, array $record, int $tim
         throw new RuntimeException('当前模型未配置受支持的编辑适配器。');
     }
 
-    // 绘画模式：根据 image_adapter 白名单路由
-    $imageAdapter = trim((string) ($record['image_adapter'] ?? ''));
-    Logger::info('CALL_IMAGE_API_DRAW', ['imageAdapter' => $imageAdapter, 'model' => ($record['model'] ?? 'N/A')]);
-
-    if ($imageAdapter === 'banana_async_image') {
-        // Banana async: submit → throw ImageEditTaskQueuedException → poll in perform_generation_record
-        $submitResult = call_banana_async_image_submit($baseUrl, $apiKey, $record, $timeout);
-        $taskId = (string) ($submitResult['task_id'] ?? '');
-        if ($taskId === '') {
-            throw new RuntimeException('Banana 异步图片任务已提交，但未返回任务 ID。');
-        }
-        $submitJson = json_encode($submitResult['data'] ?? [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        throw new ImageEditTaskQueuedException($taskId, $submitJson, $baseUrl, $apiKey, (int) ($record['id'] ?? 0));
-    }
-
-    if ($imageAdapter === 'image2_chat_image') {
-        // Image2 chat: POST /v1/chat/completions with messages format
-        return call_image2_chat_image($baseUrl, $apiKey, $record, $timeout);
-    }
-
-    if ($imageAdapter === 'seedream_image' || $imageAdapter === 'grok_image') {
-        throw new RuntimeException('图片适配器 ' . $imageAdapter . ' 尚未配置完整，请联系管理员。');
-    }
-
-    // 未配置 image_adapter 的模型
-    if (!empty($imageAdapter)) {
-        throw new RuntimeException('不受支持的图片适配器：' . $imageAdapter . '。请检查模型配置。');
-    }
-
-    // 完全没有 image_adapter 时，使用 chat/completions 路线（兼容模式）
+    // 无适配器配置：relay 兼容模式
     return call_image_generation_api($baseUrl, $apiKey, $record, $timeout);
 
+}
+
+/**
+ * 统一 NewToken 异步图片提交。
+ * 全部走 POST /v1/videos，支持纯文生图和参考图模式。
+ *
+ * imageAdapter 值：
+ *   newtoken_image2_async  → gpt-image-2-* 系列
+ *   newtoken_banana_async  → nana-banana-2 / nana-banana-pro
+ *
+ * @throws ImageEditTaskQueuedException
+ */
+function call_newtoken_image_async_submit(string $baseUrl, string $apiKey, array $record, int $timeout, string $imageAdapter): array
+{
+    $modelId  = trim((string) ($record['model'] ?? ''));
+    $mode     = (string) ($record['mode'] ?? 'draw');
+    $spec     = newtoken_model_spec($modelId);
+
+    if ($spec === null || ($spec['kind'] ?? '') !== 'image') {
+        throw new RuntimeException('不支持的图片模型：' . $modelId . '。');
+    }
+
+    // 收集参考图 URL
+    $refUrls = [];
+    if ($mode === 'edit' || $mode === 'reference') {
+        $refUrls = image_reference_urls_from_record($record);
+    }
+
+    $payload = [
+        'model' => $modelId,
+        'prompt' => trim((string) ($record['prompt'] ?? '')),
+    ];
+
+    // aspect_ratio
+    $aspectField = $spec['aspect_field'] ?? 'aspect_ratio';
+    $size = trim((string) ($record['size'] ?? 'auto'));
+    if ($size !== '' && $size !== 'auto') {
+        $payload[$aspectField] = $size;
+    }
+
+    // 分辨率（Nana 系列）
+    if (!empty($spec['resolution_field'])) {
+        $resField = $spec['resolution_field'];
+        $resolution = trim((string) ($record['resolution'] ?? ''));
+        if ($resolution !== '' && in_array($resolution, ($spec['resolution_options'] ?? []), true)) {
+            $payload[$resField] = $resolution;
+        } else {
+            // 默认 1k
+            $payload[$resField] = '1k';
+        }
+    }
+
+    // 参考图字段
+    if ($refUrls) {
+        $refField = $spec['reference_field'] ?? 'images';
+        $payload[$refField] = $refUrls;
+    }
+
+    $endpoint = safe_join_api_url($baseUrl, $spec['endpoint'] ?? '/v1/videos');
+    $authType = strtolower(trim((string) ($record['auth_type'] ?? 'bearer')));
+    $headers  = $authType === 'x-api-key'
+        ? ['Content-Type: application/json', 'x-api-key: ' . $apiKey]
+        : ['Content-Type: application/json', 'Authorization: Bearer ' . $apiKey];
+
+    $ch = curl_init($endpoint);
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => $timeout,
+        CURLOPT_CONNECTTIMEOUT => 15,
+        CURLOPT_HTTPHEADER => $headers,
+        CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+    ]);
+    $raw = curl_exec($ch);
+    $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlErr  = curl_error($ch);
+    curl_close($ch);
+
+    if ($curlErr !== '') {
+        return [
+            'raw' => json_encode(['error' => '网络错误：' . $curlErr], JSON_UNESCAPED_UNICODE),
+            'http_code' => 0,
+            'content_type' => 'application/json',
+            'error' => $curlErr,
+        ];
+    }
+
+    $data = json_decode((string) $raw, true);
+    if (!is_array($data)) {
+        return [
+            'raw' => $raw,
+            'http_code' => $httpCode,
+            'content_type' => 'application/json',
+            'error' => '响应 JSON 解析失败',
+        ];
+    }
+
+    // 检查 API 错误
+    $apiErr = $data['error']['message'] ?? $data['error'] ?? null;
+    if ($apiErr !== null) {
+        $msg = is_string($apiErr) ? $apiErr : 'API 返回错误';
+        return [
+            'raw' => json_encode(['error' => $msg], JSON_UNESCAPED_UNICODE),
+            'http_code' => $httpCode,
+            'content_type' => 'application/json',
+            'error' => $msg,
+        ];
+    }
+
+    if ($httpCode < 200 || $httpCode >= 300) {
+        $excerpt = generation_response_excerpt($data, $httpCode);
+        return [
+            'raw' => $raw,
+            'http_code' => $httpCode,
+            'content_type' => 'application/json',
+            'error' => $excerpt,
+        ];
+    }
+
+    // 提取 task_id
+    $taskId = image2_extract_task_id($data);
+    if ($taskId !== '') {
+        Logger::info('NEwTOKEN_IMAGE_ASYNC_SUBMIT', [
+            'model' => $modelId,
+            'adapter' => $imageAdapter,
+            'mode' => $mode,
+            'task_id' => $taskId,
+            'http_code' => $httpCode,
+        ]);
+        $submitJson = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        // 保存 task_id 到 DB，防止 cleanup_stale_running_generation_records 在此函数抛出异常之前清理此记录
+        $recordId = (int) ($record['id'] ?? 0);
+        if ($recordId > 0) {
+            try {
+                $pdoLocal = db();
+                $stmtLocal = $pdoLocal->prepare(
+                    "UPDATE generation_records SET remote_task_id = ?, edit_task_id = ?, edit_task_status = ?, edit_task_response = ?, last_poll_at = NOW(), updated_at = NOW() WHERE id = ? AND status IN ('queued','running')"
+                );
+                $stmtLocal->execute([$taskId, $taskId, 'submitted', $submitJson, $recordId]);
+            } catch (Throwable $e) {
+                Logger::warning('NEwTOKEN_IMAGE_ASYNC_SUBMIT_SAVE_FAIL', ['record_id' => $recordId, 'error' => $e->getMessage()]);
+            }
+        }
+        throw new ImageEditTaskQueuedException($taskId, $submitJson, $baseUrl, $apiKey, $recordId);
+    }
+
+    // 同步返回（极少情况）：提取结果
+    $result = image2_extract_result($data);
+    if ($result !== null) {
+        return [
+            'raw' => json_encode($result, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'http_code' => 200,
+            'content_type' => 'application/json',
+            'error' => '',
+        ];
+    }
+
+    // 无 task_id 且无结果
+    $excerpt = generation_response_excerpt($data, $httpCode);
+    return [
+        'raw' => $raw,
+        'http_code' => $httpCode,
+        'content_type' => 'application/json',
+        'error' => '未返回任务 ID 且无图片结果：' . $excerpt,
+    ];
 }
 
 
@@ -4786,7 +5165,7 @@ function perform_generation_record(int $recordId, ?int $timeout = null): array
             $stmtFail = $pdo2->prepare(
                 "UPDATE generation_records
                  SET status = 'failed', error_message = ?, updated_at = NOW()
-                 WHERE id = ? AND status = 'running'"
+                 WHERE id = ? AND status IN ('queued','running')"
             );
             $stmtFail->execute([$errMsg, $qe->recordId]);
             throw $pollEx;
@@ -4951,7 +5330,7 @@ function refund_generation_failure(PDO $pdo, int $recordId, string $errorMsg, st
 
              SET status = 'failed', credits_cost = 0, error_message = ?, finished_at = NOW()
 
-             WHERE id = ? AND status = 'running'"
+             WHERE id = ? AND status IN ('queued','running')"
 
         );
 
@@ -5054,7 +5433,7 @@ function claim_next_generation_record(): ?int
 
              SET status = 'running', started_at = NOW(), error_message = NULL
 
-             WHERE id = ? AND status = 'running'"
+             WHERE id = ? AND status IN ('queued','running')"
 
         );
 
@@ -5442,7 +5821,7 @@ function fail_generation_record_with_refund(int $recordId, string $message): boo
 
              SET status = 'failed', credits_cost = 0, error_message = ?, finished_at = NOW()
 
-             WHERE id = ? AND status = 'running'"
+             WHERE id = ? AND status IN ('queued','running')"
 
         );
 

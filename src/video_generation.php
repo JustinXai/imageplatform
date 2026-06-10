@@ -49,8 +49,8 @@ function video_allowed_formats(): array
 /**
  * 生成视频 API 请求体（按 adapter 类型构建）
  *
- * newtoken_video_async: 使用 /v1/videos 接口，payload 包含 model/prompt/duration/aspect_ratio/input_mode/reference_images
- * kaiyuncode/relay: 使用原有多格式探测逻辑
+ * newtoken_video_async: 使用 /v1/videos 接口，按 NEWTOKEN_MODEL_SPECS 的字段映射。
+ * kaiyuncode/relay: 使用原有多格式探测逻辑。
  *
  * @param  array $record 生成记录
  * @return array         payload 数组
@@ -68,78 +68,112 @@ function video_payload_formats(array $record): array
     $refVideoUrls = $record['input_videos'] ?? [];
     $refAudioUrls = $record['input_audios'] ?? [];
 
-    // Field mappings from record (set in generation_input_from_request)
-    $durationField = trim((string) ($record['video_duration_field'] ?? 'duration'));
-    $aspectField   = trim((string) ($record['video_aspect_field'] ?? 'aspect_ratio'));
-    $sizeField     = trim((string) ($record['video_size_field'] ?? 'size'));
-    $inputModeField = trim((string) ($record['video_input_mode_field'] ?? 'input_mode'));
-    $refField      = trim((string) ($record['video_ref_field'] ?? 'reference_images'));
-    $refVideoField = trim((string) ($record['video_ref_video_field'] ?? 'extra_videos'));
-    $refAudioField = trim((string) ($record['video_ref_audio_field'] ?? 'extra_audios'));
-
-    // newtoken_video_async: 构建 /v1/videos 接口专用 payload
+    // newtoken_video_async: 使用 NEWTOKEN_MODEL_SPECS 字段映射
     if ($adapter === 'newtoken_video_async') {
+        $spec = newtoken_model_spec($model);
+
         $payload = [
             'model' => $model,
             'prompt' => $prompt,
         ];
 
-        // Duration field (always use 'duration', never 'seconds')
-        $payload[$durationField] = $duration;
+        // Duration（固定值可不传，默认由 spec 定义）
+        $durationField = $spec['duration_field'] ?? 'duration';
+        $specDefaultDuration = $spec['default_duration'] ?? null;
+        if ($duration !== $specDefaultDuration || $specDefaultDuration === null) {
+            $payload[$durationField] = $duration;
+        }
 
-        // Aspect field (only if not 'auto')
+        // Aspect ratio（仅当非 auto 时传参）
+        $aspectField = $spec['aspect_field'] ?? 'aspect_ratio';
         if ($aspect !== '' && $aspect !== 'auto') {
             $payload[$aspectField] = $aspect;
         }
 
-        // Size field (only if not 'auto')
-        if ($videoSize !== '' && $videoSize !== 'auto') {
-            $payload[$sizeField] = $videoSize;
+        // Size field（video-pro-720p 用 image_url 作为 primary_image_field，非 video_size）
+        if (!empty($spec['primary_image_field'])) {
+            // video-pro-720p: primary_image_field = image_url
+            // sora-2: primary_image_field = image
+            $primaryField = $spec['primary_image_field'];
+            // 单张主参考图：从 refUrls 取第一张
+            if (!empty($refUrls)) {
+                $first = is_string($refUrls[0]) ? $refUrls[0] : ($refUrls[0]['url'] ?? '');
+                if ($first !== '') {
+                    $payload[$primaryField] = $first;
+                }
+            }
         }
 
-        // Input mode field
-        if ($inputModeField !== '' && $inputModeField !== 'input_mode') {
-            $payload[$inputModeField] = $videoMode;
-        } else {
-            $payload['input_mode'] = $videoMode;
-        }
-
-        // Reference images field
-        if (!empty($refUrls) && is_array($refUrls)) {
+        // 多参考图（veo-omni-flash: ingredients_images）
+        if (!empty($spec['reference_field'])) {
+            $refField = $spec['reference_field'];
             $refs = [];
             foreach ($refUrls as $img) {
-                if (is_string($img)) {
-                    $refs[] = $img;
-                } elseif (is_array($img) && isset($img['url'])) {
-                    $refs[] = $img['url'];
-                }
+                $url = is_string($img) ? $img : ($img['url'] ?? '');
+                if ($url !== '') $refs[] = $url;
             }
             if (!empty($refs)) {
                 $payload[$refField] = $refs;
             }
         }
 
-        // Reference videos field
-        if (!empty($refVideoUrls) && is_array($refVideoUrls)) {
-            $vids = [];
-            foreach ($refVideoUrls as $v) {
-                if (is_string($v)) $vids[] = $v;
-                elseif (is_array($v) && isset($v['url'])) $vids[] = $v['url'];
+        // 额外参考图（video-pro-720p: extra_images）
+        if (!empty($spec['extra_images_field'])) {
+            $extraField = $spec['extra_images_field'];
+            $extraImgs = [];
+            foreach (array_slice($refUrls, 1) as $img) {
+                $url = is_string($img) ? $img : ($img['url'] ?? '');
+                if ($url !== '') $extraImgs[] = $url;
             }
-            if (!empty($vids)) {
-                $payload[$refVideoField] = $vids;
+            if (!empty($extraImgs)) {
+                $payload[$extraField] = $extraImgs;
             }
         }
 
-        // Reference audio field
-        if (!empty($refAudioUrls) && is_array($refAudioUrls)) {
+        // 额外参考视频（video-pro-720p: extra_videos）
+        if (!empty($spec['extra_videos_field'])) {
+            $vidField = $spec['extra_videos_field'];
+            $vids = [];
+            foreach ($refVideoUrls as $v) {
+                $url = is_string($v) ? $v : ($v['url'] ?? '');
+                if ($url !== '') $vids[] = $url;
+            }
+            if (!empty($vids)) {
+                $payload[$vidField] = $vids;
+            }
+        }
+
+        // 额外参考音频（video-pro-720p: extra_audios）
+        if (!empty($spec['extra_audios_field'])) {
+            $audField = $spec['extra_audios_field'];
             $auds = [];
             foreach ($refAudioUrls as $a) {
-                if (is_string($a)) $auds[] = $a;
-                elseif (is_array($a) && isset($a['url'])) $auds[] = $a['url'];
+                $url = is_string($a) ? $a : ($a['url'] ?? '');
+                if ($url !== '') $auds[] = $url;
             }
             if (!empty($auds)) {
-                $payload[$refAudioField] = $auds;
+                $payload[$audField] = $auds;
+            }
+        }
+
+        // 参考视频（veo-omni-flash-video-edit: video_url）
+        if (!empty($spec['video_field'])) {
+            $vidF = $spec['video_field'];
+            $vidUrl = '';
+            foreach ($refVideoUrls as $v) {
+                $url = is_string($v) ? $v : ($v['url'] ?? '');
+                if ($url !== '') { $vidUrl = $url; break; }
+            }
+            if ($vidUrl !== '') {
+                $payload[$vidF] = $vidUrl;
+            }
+        }
+
+        // input_mode（仅当非 text_to_video 且有该字段时）
+        if ($videoMode !== 'text_to_video') {
+            $inputModeField = $spec['input_mode_field'] ?? null;
+            if ($inputModeField !== null) {
+                $payload[$inputModeField] = $videoMode;
             }
         }
 

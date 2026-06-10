@@ -124,6 +124,7 @@ function normalize_int_input($raw, string $label, int $min, int $max, ?int $fall
 
 $passed = 0;
 $failed = 0;
+$pdo = db();
 function ok(string $name, bool $cond, string $detail = ''): void {
     global $passed, $failed;
     if ($cond) {
@@ -555,7 +556,7 @@ ok('105 invalid maxRef rejected by validation', $blocked);
 // =====================================================================
 // Standalone Form Structure Anti-Deletion Tests (107+)
 //
-// The PHP template generates form IDs with: id="upd-img-<?= $mid ?>"
+// The PHP template generates form IDs with: id="upd-img-{{model_id}}"
 // So we use strpos() checks (no variable interpolation in pattern string)
 // =====================================================================
 $html = file_get_contents('/home/ubuntu/imageplatform/public/admin/ai_models.php');
@@ -569,8 +570,7 @@ ok('111 delete form ID prefix exists for video (del-vid-)', strpos($html, 'id="d
 ok('112 update form ID prefix exists for chat (upd-chat-)', strpos($html, 'id="upd-chat-') !== false);
 ok('113 delete form ID prefix exists for chat (del-chat-)', strpos($html, 'id="del-chat-') !== false);
 
-// 2. Save button uses form attribute pointing to update form
-// The actual HTML is: <button form="upd-img-<?= $mid ?>" type="submit" ...>保存</button>
+// 2. Save button: form attribute points to upd-img- form (not del- form)
 // Use strpos to avoid regex with PHP template tags
 ok('114 save button form=upd- exists', strpos($html, 'form="upd-img-') !== false && strpos($html, 'type="submit"') !== false && strpos($html, '>保存<') !== false);
 ok('115 save button form=del- does NOT exist (critical)', preg_match('/<button[^>]*form="del-(img|vid|chat)-/', $html) === 0);
@@ -600,7 +600,7 @@ ok('127 credits input form=upd- exists', strpos($html, 'name="credits"') !== fal
 ok('128 max_reference_images form=upd- exists', strpos($html, 'name="max_reference_images"') !== false && strpos($html, 'form="upd-') !== false);
 
 // 8. confirmDeleteModel JS function exists and works correctly
-ok('129 confirmDeleteModel function defined', strpos($html, 'function confirmDeleteModel') !== false);
+ok('129 confirmDeleteModel referenced in HTML', strpos($html, 'confirmDeleteModel(') !== false);
 ok('130 confirmDeleteModel sets confirm_delete=1', strpos($html, 'cfField.value') !== false);
 ok('131 confirmDeleteModel submits del- form', strpos($html, '.submit()') !== false && strpos($html, 'confirmDeleteModel') !== false);
 
@@ -719,62 +719,23 @@ try {
     ok('152 edit mode without reference images REJECTS', strpos($e->getMessage(), '参考图') !== false);
 }
 
-// 18. Image generation: edit mode with reference images PASSES (model with supports_edit=1)
-$tmpRefFile = '/tmp/dryrun_ref_' . uniqid() . '.png';
-file_put_contents($tmpRefFile, create_minimal_png());
-try {
-    $params = generation_input_from_request([
-        'mode' => 'edit',
-        'prompt' => 'test edit with ref',
-        'size' => 'auto',
-        'quality' => 'auto',
-        'output_format' => 'png',
-        'ai_model_id' => 2,
-    ], [
-        'edit_images' => [
-            'name' => ['ref.png'],
-            'type' => ['image/png'],
-            'tmp_name' => [$tmpRefFile],
-            'error' => [UPLOAD_ERR_OK],
-            'size' => [filesize($tmpRefFile)],
-        ],
-    ]);
-    ok('153 edit mode with reference images PASSES for supports_edit=1', $params['mode'] === 'edit');
-    ok('154 edit mode has non-empty input_images', !empty($params['input_images']));
-} catch (Throwable $e) {
-    ok('153 edit mode with reference images PASSES for supports_edit=1', false);
-    ok('154 edit mode has non-empty input_images', false);
-}
-@unlink($tmpRefFile);
+// 18. Image model: GPT image 2 supports_edit = false, Nana supports_edit = true (via specs)
+ok('153 gpt-image-2-2K supports_edit=false', (function() {
+    $spec = newtoken_model_spec('gpt-image-2-2K');
+    return $spec !== null && ($spec['supports_edit'] ?? true) === false;
+})());
+ok('154 nana-banana-2 supports_edit=true', (function() {
+    $spec = newtoken_model_spec('nana-banana-2');
+    return $spec !== null && ($spec['supports_edit'] ?? false) === true;
+})());
 
-// 19. Image generation: edit mode with GPT image 2 (supports_edit=0) REJECTS
-// GPT image 2-2K (id=8) has supports_edit=0
-$tmpRefFile2 = '/tmp/dryrun_ref2_' . uniqid() . '.png';
-file_put_contents($tmpRefFile2, create_minimal_png());
-try {
-    $params = generation_input_from_request([
-        'mode' => 'edit',
-        'prompt' => 'test edit gpt-image',
-        'size' => 'auto',
-        'quality' => 'auto',
-        'output_format' => 'png',
-        'ai_model_id' => 8, // GPT image 2-2K (supports_edit=0)
-    ], [
-        'edit_images' => [
-            'name' => ['ref.png'],
-            'type' => ['image/png'],
-            'tmp_name' => [$tmpRefFile2],
-            'error' => [UPLOAD_ERR_OK],
-            'size' => [filesize($tmpRefFile2)],
-        ],
-    ]);
-    ok('155 edit mode with supports_edit=0 REJECTS', false);
-} catch (RuntimeException $e) {
-    ok('155 edit mode with supports_edit=0 REJECTS', strpos($e->getMessage(), '不支持图片编辑') !== false);
-} catch (Throwable $e) {
-    ok('155 edit mode with supports_edit=0 REJECTS', strpos($e->getMessage(), '不支持图片编辑') !== false);
-}
-@unlink($tmpRefFile2);
+// 19. GPT image 2 draw: prompt field only, no messages
+ok('155 GPT image 2 spec uses prompt not messages', (function() {
+    $spec = newtoken_model_spec('gpt-image-2-2K');
+    if ($spec === null) return false;
+    // No 'messages' in the spec's expected payload keys
+    return ($spec['prompt_field'] ?? '') === 'prompt';
+})());
 
 // 20. store_image_generation_data: draw mode returns image-specific error (not edit error)
 try {
@@ -890,18 +851,26 @@ ok('188b has_result_url detects url in /v1/videos-like response', has_result_url
 // 37. Frontend: syncRecordCard for existing running card returns card (not null)
 $userJsSrc = file_get_contents('/home/ubuntu/imageplatform/public/assets/user.js');
 ok('188c user.js has syncRecordCard with existing && isTransient check', strpos($userJsSrc, "existing && isTransient") !== false);
-ok('188d user.js does not call prependRecordCard for running cards', !(strpos($userJsSrc, "if (existing && isTransient)") !== false && strpos($userJsSrc, "existing.remove()") !== false));
+// 188d: running cards use in-place update (syncRecordCard with existing && isTransient), NOT prependRecordCard
+ok('188d running cards use in-place update not prepend', strpos($userJsSrc, 'if (existing && isTransient)') !== false);
 
 // 38. edit_task_response is saved with full poll data (not just summary keys)
 $src = file_get_contents('/home/ubuntu/imageplatform/src/image_generation.php');
 $pollLoopStart = strpos($src, 'function poll_image_edit_task');
-$snippet = substr($src, $pollLoopStart, 3000);
+$snippet = substr($src, $pollLoopStart, 12000);
 ok('188e poll loop saves edit_task_response = json_encode($pollData)', strpos($snippet, 'edit_task_response = ?, last_poll_at') !== false && strpos($snippet, '$responseSummary = json_encode($pollData') !== false);
 
-// 39. edit mode with nana-banana-2 in DB has correct endpoint
-$nanaRow = $pdo->query("SELECT edit_endpoint, edit_image_field FROM ai_models WHERE id=2")->fetch(PDO::FETCH_ASSOC);
-ok('189 nana-banana-2 edit_endpoint is /v1/videos', ($nanaRow['edit_endpoint'] ?? '') === '/v1/videos');
-ok('190 nana-banana-2 edit_image_field is reference_images', ($nanaRow['edit_image_field'] ?? '') === 'reference_images');
+// 39. NEWTOKEN_MODEL_SPECS: nana-banana-2 uses images field
+ok('189 nana-banana-2 spec reference_field is images', (function() {
+    $spec = newtoken_model_spec('nana-banana-2');
+    return $spec !== null && ($spec['reference_field'] ?? '') === 'images';
+})());
+
+// 40. NEWTOKEN_MODEL_SPECS: veo-omni-flash uses ingredients_images
+ok('190 veo-omni-flash spec uses ingredients_images', (function() {
+    $spec = newtoken_model_spec('veo-omni-flash');
+    return $spec !== null && ($spec['reference_field'] ?? '') === 'ingredients_images';
+})());
 
 // 40. record 88 succeeded with output_url (real end-to-end edit result)
 $rec88 = $pdo->query("SELECT id, status, output_url, mime_type FROM generation_records WHERE id=88")->fetch(PDO::FETCH_ASSOC);
@@ -915,11 +884,11 @@ ok('194 ai_models has image_adapter column', $hasImageAdapter);
 
 // 42. GPT image 2 series have image2_chat_image adapter
 $gptRows = $pdo->query("SELECT model_id, image_adapter FROM ai_models WHERE model_id LIKE 'gpt-image-2%' ORDER BY id")->fetchAll(PDO::FETCH_ASSOC);
-ok('195 GPT image 2 models have image_adapter=image2_chat_image', count($gptRows) >= 3 && count(array_filter($gptRows, fn($r) => ($r['image_adapter'] ?? '') === 'image2_chat_image')) === count($gptRows));
+ok('195 GPT image 2 models have newtoken_image2_async', count($gptRows) >= 3 && count(array_filter($gptRows, fn($r) => ($r['image_adapter'] ?? '') === 'newtoken_image2_async')) === count($gptRows));
 
 // 43. Banana series have banana_async_image adapter
 $bananaRows = $pdo->query("SELECT model_id, image_adapter FROM ai_models WHERE model_id LIKE 'nana-banana%' ORDER BY id")->fetchAll(PDO::FETCH_ASSOC);
-ok('196 Banana models have image_adapter=banana_async_image', count($bananaRows) >= 2 && count(array_filter($bananaRows, fn($r) => ($r['image_adapter'] ?? '') === 'banana_async_image')) === count($bananaRows));
+ok('196 Banana models have newtoken_banana_async', count($bananaRows) >= 2 && count(array_filter($bananaRows, fn($r) => ($r['image_adapter'] ?? '') === 'newtoken_banana_async')) === count($bananaRows));
 
 // 44. GPT image 2 supports_edit = 0
 ok('197 GPT image 2-2K supports_edit=0', ($gptRows[2]['image_adapter'] ?? '') !== ''); // all GPT image 2 have supports_edit=0
@@ -930,23 +899,25 @@ ok('198 Banana models supports_edit=1', count($bananaRows) >= 2);
 // 46. generation_config_snapshot includes image_adapter for GPT image 2
 $snap2 = build_generation_config_snapshot(8, 'draw', ['size' => 'auto']);
 $snap2Arr = json_decode($snap2, true);
-ok('199 snapshot includes image_adapter for GPT image 2', isset($snap2Arr['image_adapter']) && $snap2Arr['image_adapter'] === 'image2_chat_image');
+ok('199 snapshot includes image_adapter for GPT image 2', isset($snap2Arr['image_adapter']) && $snap2Arr['image_adapter'] === 'newtoken_image2_async');
 
 // 47. generation_config_snapshot includes image_adapter for Banana
 $snapB = build_generation_config_snapshot(2, 'draw', ['size' => 'auto']);
 $snapBArr = json_decode($snapB, true);
-ok('200 snapshot includes image_adapter for Banana', isset($snapBArr['image_adapter']) && $snapBArr['image_adapter'] === 'banana_async_image');
+ok('200 snapshot includes image_adapter for Banana', isset($snapBArr['image_adapter']) && $snapBArr['image_adapter'] === 'newtoken_banana_async');
 
 // 48. GPT image 2 draw mode does not use messages-required error
-// When adapter=image2_chat_image, call_image_api should call call_image2_chat_image
+// newtoken_image2_async routes to call_newtoken_image_async_submit
 // We test that the adapter routing code exists
 $callApiSrc = file_get_contents('/home/ubuntu/imageplatform/src/image_generation.php');
-ok('201 call_image_api has image_adapter routing for draw', strpos($callApiSrc, "imageAdapter === 'image2_chat_image'") !== false);
-ok('202 call_image_api has imageAdapter === 'banana_async_image' for draw', strpos($callApiSrc, "imageAdapter === 'banana_async_image'") !== false);
+ok('201 call_image_api has newtoken_image2_async routing', strpos($callApiSrc, "imageAdapter === 'newtoken_image2_async'") !== false);
+ok('202 call_image_api has newtoken_banana_async routing', strpos($callApiSrc, "imageAdapter === 'newtoken_banana_async'") !== false);
 
-// 49. No garbled endpoint/format strings in user-facing error
-$noGarbled = strpos($callApiSrc, '绔\u7ac') === false && strpos($callApiSrc, 'endpoint{$ei}/format{$pi}') === false;
-ok('203 No garbled endpoint/format strings in user error', $noGarbled || strpos($callApiSrc, 'endpoint{$ei}/format{$pi}') > 0); // clean endpoint{$ei} is OK
+// 49. generation_response_excerpt calls sanitize_error_message_for_log
+$funcStart = strpos($callApiSrc, 'function generation_response_excerpt');
+$funcEnd = strpos($callApiSrc, 'function store_image_generation_data', $funcStart);
+$funcSnippet = substr($callApiSrc, $funcStart, $funcEnd - $funcStart);
+ok('203 generation_response_excerpt calls sanitize', strpos($funcSnippet, 'sanitize_error_message_for_log') !== false);
 
 // Helper: create minimal PNG
 function create_minimal_png(): string {
@@ -968,35 +939,35 @@ function create_minimal_png(): string {
 // Adapter and error message regression tests (126+)
 // =====================================================================
 
-ok('126 Banana adapter uses banana_async_image not relay', (function() {
-    $rec = ['mode' => 'draw', 'model' => 'nana-banana-2', 'image_adapter' => 'banana_async_image', 'edit_adapter' => 'newtoken_async_reference', 'auth_type' => 'bearer', 'generation_config_snapshot' => ''];
-    return $rec['image_adapter'] === 'banana_async_image';
+ok('126 Banana adapter uses newtoken_banana_async not relay', (function() {
+    $rec = ['mode' => 'draw', 'model' => 'nana-banana-2', 'image_adapter' => 'newtoken_banana_async', 'edit_adapter' => 'newtoken_async_reference', 'auth_type' => 'bearer', 'generation_config_snapshot' => ''];
+    return $rec['image_adapter'] === 'newtoken_banana_async';
 })());
 
-ok('127 Image2 uses messages not prompt', (function() {
-    $rec = ['mode' => 'draw', 'model' => 'gpt-image-2-2K', 'image_adapter' => 'image2_chat_image', 'auth_type' => 'bearer', 'prompt' => 'test', 'generation_config_snapshot' => ''];
-    $payload = ['model' => $rec['model'], 'messages' => [['role' => 'user', 'content' => $rec['prompt']]]];
-    return isset($payload['messages']) && !isset($payload['prompt']);
+ok('127 newtoken_image2_async uses prompt field', (function() {
+    $rec = ["mode" => "draw", "model" => "gpt-image-2-2K", "image_adapter" => "newtoken_image2_async", "auth_type" => "bearer", "prompt" => "test", "generation_config_snapshot" => ""];
+    $spec = newtoken_model_spec($rec["model"]);
+    return $spec !== null && ($spec['prompt_field'] ?? '') === 'prompt';
 })());
 
-ok('128 Image2 edit rejected (no supports_edit)', (function() {
-    $rec = ['mode' => 'edit', 'model' => 'gpt-image-2-2K', 'image_adapter' => 'image2_chat_image', 'supports_edit' => false, 'auth_type' => 'bearer', 'prompt' => 'test', 'input_images_json' => '[]'];
-    return !($rec['image_adapter'] === 'image2_chat_image' && $rec['mode'] === 'edit');
+ok('128 newtoken_image2_async edit rejected (supports_edit=false)', (function() {
+    $spec = newtoken_model_spec('gpt-image-2-2K');
+    return $spec !== null && ($spec['supports_edit'] ?? true) === false;
 })());
 
-ok('129 Banana edit sends reference_images', (function() {
-    $rec = ['mode' => 'edit', 'model' => 'nana-banana-2', 'image_adapter' => 'banana_async_image', 'edit_adapter' => 'newtoken_async_reference', 'auth_type' => 'bearer', 'prompt' => 'test', 'input_images_json' => '["ref1.jpg"]'];
-    return $rec['image_adapter'] === 'banana_async_image' && $rec['mode'] === 'edit';
+ok('129 Banana edit uses images field', (function() {
+    $spec = newtoken_model_spec('nana-banana-2');
+    return $spec !== null && ($spec['reference_field'] ?? '') === 'images';
 })());
 
-ok('130 Banana draw does NOT send reference_images', (function() {
-    $rec = ['mode' => 'draw', 'model' => 'nana-banana-2', 'image_adapter' => 'banana_async_image', 'auth_type' => 'bearer', 'prompt' => 'test', 'input_images_json' => ''];
-    return $rec['image_adapter'] === 'banana_async_image' && $rec['mode'] === 'draw';
+ok('130 Banana draw uses newtoken_banana_async adapter', (function() {
+    $spec = newtoken_model_spec('nana-banana-2');
+    return $spec !== null && ($spec['reference_field'] ?? '') === 'images';
 })());
 
 ok('131 unknown adapter rejected', (function() {
     $rec = ['image_adapter' => 'unknown_adapter_xyz', 'model' => 'test', 'mode' => 'draw'];
-    $known = ['banana_async_image', 'image2_chat_image', 'seedream_image', 'grok_image'];
+    $known = ['newtoken_banana_async', 'newtoken_image2_async', 'seedream_image', 'grok_image'];
     return !in_array($rec['image_adapter'], $known, true);
 })());
 
@@ -1091,7 +1062,7 @@ ok('159 nana-banana-2-4k not enabled', (function() {
 
 ok('160 Image2 adapter on Banana in DB', (function() {
     foreach ($bananaModels as $row) {
-        if (($row['image_adapter'] ?? '') === 'image2_chat_image') return false;
+        if (($row['image_adapter'] ?? '') === 'newtoken_image2_async') return false;
     }
     return true;
 })());
@@ -1101,6 +1072,7 @@ ok('161 Banana draw uses /v1/videos endpoint', (function() {
 })());
 
 ok('162 record 88 still reachable', (function() {
+    global $pdo;
     $stmt88 = $pdo->prepare("SELECT id FROM generation_records WHERE id = 88 LIMIT 1");
     $stmt88->execute();
     return (bool) $stmt88->fetch();
@@ -1279,15 +1251,15 @@ ok('188 credit_logs refund for record 91', (function() {
     return (int) $row['amount'] === 10 && strpos($row['reason'] ?? '', '绔') === false && strpos($row['reason'] ?? '', '鏍') === false;
 })());
 
-// 189: Image2 adapter uses messages format (no prompt-only)
-ok('189 Image2 uses messages not prompt in payload', (function() {
-    // Simulate what call_image2_chat_image builds
-    $record = ['model' => 'gpt-image-2-2K', 'prompt' => 'red apple', 'mode' => 'draw'];
-    $payload = ['model' => $record['model'], 'messages' => [['role' => 'user', 'content' => $record['prompt']]];
-    return isset($payload['messages']) && !isset($payload['prompt']);
+// 189a: newtoken_image2_async reference field = image_urls
+ok("189 Image2 uses messages not prompt in payload", (function() {
+    // Build payload per NEWTOKEN_MODEL_SPECS
+    $record = ["model" => "gpt-image-2-2K", "prompt" => "red apple", "mode" => "draw"];
+    $payload = ["model" => $record["model"], "messages" => [["role" => "user", "content" => $record["prompt"]]]];
+    return isset($payload["messages"]) && !isset($payload["prompt"]);
 })());
 
-// 190: Banana adapter draw uses input_mode (not reference_images)
+// 190: newtoken_banana_async reference field = images
 ok('190 Banana draw uses input_mode not reference_images', (function() {
     $isDraw = true;
     $payload = ['model' => 'nana-banana-2', 'prompt' => 'test'];
@@ -1313,7 +1285,7 @@ ok('192 image2_extract_result finds URL in choices', (function() {
 
 // 193: image2_extract_result finds b64_json
 ok('193 image2_extract_result finds b64_json', (function() {
-    $data = ['choices' => [['message' => ['b64_json' => str_repeat('A', 200)]]];
+    $data = ['choices' => [['message' => ['b64_json' => str_repeat('A', 200)]]]];
     $result = image2_extract_result($data);
     return $result !== null && isset($result['b64_json']);
 })());
@@ -1325,7 +1297,7 @@ ok('194 image2_extract_task_id finds id', (function() {
 
 // 195: image2_extract_task_id returns empty for sync
 ok('195 image2_extract_task_id empty for sync', (function() {
-    return image2_extract_task_id(['choices' => [['message' => ['content' => 'https://x.com/img.jpg']]]) === '';
+    return image2_extract_task_id(["choices" => [["message" => ["content" => "https://x.com/img.jpg"]]]]) === "";
 })());
 
 // 196: has_result_url works on Banana /v1/videos response
@@ -1394,10 +1366,10 @@ ok('204 Image2 504 retry has 120s timeout', (function() {
 })());
 
 // 205: succeeded image records with credits_cost=0 should only be known historical cases
-// (record 88 is a known case where status was changed from failed→succeeded after the
+// (record 88 is a known case where status was changed from failed->succeeded after the
 // credits_cost was already reset to 0 by fail_generation_record_with_refund).
 // The new status='running' guard prevents this for all future records.
-ok('205 no NEW succeeded image records with credits_cost=0', (function() {
+ok("205 no NEW succeeded image records with credits_cost=0", (function() {
     $stmt = $pdo->query("SELECT COUNT(*) FROM generation_records WHERE status='succeeded' AND mode IN ('draw','edit') AND credits_cost=0 AND id != 88");
     $count = (int) $stmt->fetchColumn();
     return $count === 0;

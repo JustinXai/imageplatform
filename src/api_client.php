@@ -184,6 +184,17 @@ function api_first_data_item(array $data): ?array
     if (isset($data['output'][0]) && is_string($data['output'][0])) {
         return ['b64_json' => $data['output'][0]];
     }
+    // NewToken /v1/videos 响应格式: metadata.result_urls[0]
+    if (!empty($data['metadata']['result_urls'][0])) {
+        return ['url' => (string) $data['metadata']['result_urls'][0]];
+    }
+    // NewToken /v1/videos 响应格式: top-level url / image_url
+    if (!empty($data['url']) && is_string($data['url'])) {
+        return ['url' => $data['url']];
+    }
+    if (!empty($data['image_url']) && is_string($data['image_url'])) {
+        return ['url' => $data['image_url']];
+    }
     return null;
 }
 
