@@ -32,10 +32,17 @@ if (!function_exists('generation_record_image_src')) {
      * Returns empty string if no image result is available.
      * Does NOT return video URLs.
      */
-    function generation_record_image_src(array $record): string {
+    function generation_record_image_src(array $record, bool $preferThumb = true): string {
         $mime = (string) ($record['mime_type'] ?? '');
         if (str_starts_with($mime, 'video/')) {
             return '';
+        }
+        // Prefer thumbnail for list/card display
+        if ($preferThumb && !empty($record['thumb_url'])) {
+            $url = (string) $record['thumb_url'];
+            if (str_starts_with(strtolower($url), 'http') || str_starts_with($url, '/')) {
+                return $url;
+            }
         }
         if (!empty($record['output_url'])) {
             $url = (string) $record['output_url'];

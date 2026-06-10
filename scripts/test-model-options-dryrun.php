@@ -1445,6 +1445,119 @@ ok('219 record 99-102 succeeded have url', (function() use ($pdo) {
     return (int) $stmt->fetchColumn() === 0;
 })());
 
+// ============================================================
+// PERFORMANCE OPTIMIZATION TESTS
+// ============================================================
+
+ok("220 thumb_url column exists in generation_records", (function() use ($pdo) {
+    $stmt = $pdo->query("SHOW COLUMNS FROM generation_records LIKE 'thumb_url'");
+    return $stmt->rowCount() > 0;
+})());
+
+ok("221 generate_thumbnail function exists", function_exists('generate_thumbnail'));
+
+ok("222 thumb_url column is nullable", (function() use ($pdo) {
+    $stmt = $pdo->query("SHOW COLUMNS FROM generation_records LIKE 'thumb_url'");
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    return $row && stripos($row['Type'] ?? '', 'varchar') !== false && stripos($row['Null'] ?? '', 'YES') !== false;
+})());
+
+ok("223 admin index has pagination limit 12", (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/public/admin/index.php');
+    return preg_match('/\$perPage\s*=\s*12/', $src) === 1;
+})());
+
+ok("224 user/index has history limit 10", (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/public/user/index.php');
+    return preg_match('/LIMIT\s+10/', $src) === 1;
+})());
+
+ok("225 user records.php has pagination", (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/public/user/records.php');
+    return preg_match('/\$perPage\s*=\s*\d+/', $src) === 1;
+})());
+
+ok("226 user.js has loading=lazy on created img", (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/public/assets/user.js');
+    return strpos($src, 'loading="lazy"') !== false;
+})());
+
+ok("227 user.js has decoding=async on img", (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/public/assets/user.js');
+    return strpos($src, 'decoding="async"') !== false;
+})());
+
+ok("228 user.js has polling interval >= 3000ms", (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/public/assets/user.js');
+    // pollRecordStatus default 5000, resumePendingRecords 5000
+    return preg_match('/pollRecordStatus\s*=\s*async\s*\([\s\S]*?interval\s*=\s*(\d+)/', $src, $m)
+           && (int) $m[1] >= 3000;
+})());
+
+ok("229 user.js has document.visibilitychange polling pause", (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/public/assets/user.js');
+    return strpos($src, "document.addEventListener('visibilitychange'") !== false
+        && strpos($src, "pollingPaused") !== false;
+})());
+
+ok("230 user.js stops polling on succeeded/failed", (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/public/assets/user.js');
+    // Should call stopPollingRecord or stop setting timers after succeeded/failed
+    return strpos($src, "stopPollingRecord") !== false
+        || (strpos($src, "finalStatus === 'succeeded'") !== false && strpos($src, "finalStatus === 'failed'") !== false);
+})());
+
+ok("231 user.js dedup img.src by checking current src", (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/public/assets/user.js');
+    // syncRecordCard should check imgEl.src !== src before setting
+    return strpos($src, "imgEl.src !== src") !== false
+        || strpos($src, "videoEl.src !==") !== false;
+})());
+
+ok("232 user.js has inspectRecentRecords throttle", (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/public/assets/user.js');
+    // Should not poll more than once per record
+    return strpos($src, "activeRecordPollers.has(key)") !== false;
+})());
+
+ok("233 generation_response_record includes thumb_url", (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/src/image_generation.php');
+    $pos = strpos($src, "function generation_response_record");
+    if ($pos === false) return false;
+    $next = strpos($src, "function image_edit_task_id", $pos);
+    $snippet = $next !== false ? substr($src, $pos, $next - $pos) : substr($src, $pos, 3000);
+    return strpos($snippet, "thumb_url") !== false;
+})());
+
+ok("234 generation_record_image_src prefers thumb_url", (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/src/generation_record_view_helpers.php');
+    return strpos($src, "preferThumb") !== false
+        && strpos($src, "thumb_url") !== false;
+})());
+
+ok("235 store_image_generation_data writes thumb_url column", (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/src/image_generation.php');
+    return strpos($src, "thumb_url = ?,") !== false;
+})());
+
+ok("236 Caddyfile has Cache-Control for /uploads/*", (function() {
+    $src = file_get_contents('/etc/caddy/Caddyfile');
+    return strpos($src, "Cache-Control") !== false
+        && strpos($src, "max-age=31536000") !== false
+        && strpos($src, "immutable") !== false;
+})());
+
+ok("237 admin record card has loading=lazy", (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/public/admin/index.php');
+    return strpos($src, 'loading="lazy"') !== false;
+})());
+
+ok("238 admin uploads page has pagination", (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/public/admin/uploads.php');
+    return preg_match('/LIMIT\s*\?\s*OFFSET\s*\?/', $src) === 1;
+})());
+
+
 echo "\n";
 echo "========================================\n";
 echo "Results: {$passed} PASS, {$failed} FAIL\n";

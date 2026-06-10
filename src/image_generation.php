@@ -1501,12 +1501,14 @@ function generation_response_record(array $record): array
         $result['mime_type']  = (string) ($record['video_mime_type'] ?: 'video/mp4');
         $result['download_url'] = $result['video_src'] ?: $result['video_url'];
     } else {
+        $thumbUrl = (!empty($record['thumb_url'])) ? (string) $record['thumb_url'] : null;
+        $result['thumb_url'] = $thumbUrl ?: '';
         $result['image_src']  = (!empty($record['output_url']))
         ? (string) $record['output_url']
         : (!empty($record['output_base64'])
             ? 'data:' . ($record['mime_type'] ?: 'image/png') . ';base64,' . $record['output_base64']
             : null);
-        $result['media_url']  = $result['image_src'] ?: '';
+        $result['media_url']  = $thumbUrl ?: $result['image_src'] ?: '';
         $result['media_type'] = 'image';
         $result['mime_type']  = (string) ($record['mime_type'] ?? 'image/png');
         $result['download_url'] = $result['image_src'] ?: '';
@@ -5090,11 +5092,23 @@ function store_image_generation_data(int $recordId, array $data, array $record):
 
     $pdo = db();
 
+    // Generate thumbnail from stored local file (non-blocking)
+    $thumbUrl = null;
+    if ($storedUrl !== null && $storedUrl !== '' && str_starts_with($storedUrl, '/uploads/')) {
+        $localPath = local_public_file_from_url($storedUrl);
+        if ($localPath !== null && is_file($localPath) && is_readable($localPath)) {
+            $thumbUrl = generate_thumbnail($localPath, $mime);
+            if ($thumbUrl !== null) {
+                Logger::info('THUMBNAIL_GENERATED', ['record_id' => $recordId, 'thumb_url' => $thumbUrl]);
+            }
+        }
+    }
+
     $stmt = $pdo->prepare(
 
         "UPDATE generation_records
 
-         SET status = 'succeeded', output_base64 = ?, output_url = ?, mime_type = ?,
+         SET status = 'succeeded', output_base64 = ?, output_url = ?, thumb_url = ?, mime_type = ?,
 
              finished_at = NOW(), error_message = NULL
 
@@ -5107,6 +5121,7 @@ function store_image_generation_data(int $recordId, array $data, array $record):
         $storedBase64,
 
         $storedUrl,
+        $thumbUrl,
 
         $mime,
 

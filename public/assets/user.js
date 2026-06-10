@@ -182,9 +182,9 @@ const createRecordCard = (record) => {
 
   article.innerHTML = `
     ${record.video_src
-      ? `<video src="${escapeHtml(record.video_src)}" controls></video>`
+      ? `<video src="${escapeHtml(record.video_src)}" controls preload="metadata"></video>`
       : record.image_src
-        ? `<img src="${escapeHtml(record.image_src)}" alt="生成图片">`
+        ? `<img src="${escapeHtml(record.image_src)}" alt="生成图片" loading="lazy" decoding="async" style="aspect-ratio:1/1;object-fit:cover;width:100%;">`
         : `<div style="width:100%;aspect-ratio:1;display:grid;place-items:center;background:var(--main-surface-soft);color:var(--text-muted);font-weight:700;font-size:13px;"><span class="status-badge ${escapeHtml(record.status)}">${escapeHtml(statusText(record.status))}</span></div>`
     }
     <div class="media-card-body">
@@ -247,7 +247,7 @@ const syncRecordCard = (record) => {
       }
     }
 
-    // Update image/video source
+    // Update image/video source — only touch DOM when URL actually changes
     if (record.video_src) {
       let videoEl = card.querySelector('video');
       if (!videoEl) {
@@ -256,9 +256,10 @@ const syncRecordCard = (record) => {
           const vd = document.createElement('video');
           vd.src = record.video_src;
           vd.controls = true;
+          vd.preload = 'metadata';
           placeholder.replaceWith(vd);
         }
-      } else {
+      } else if (videoEl.src !== record.video_src) {
         videoEl.src = record.video_src;
       }
     } else if (record.image_src || record.output_url) {
@@ -270,9 +271,12 @@ const syncRecordCard = (record) => {
           const im = document.createElement('img');
           im.src = src;
           im.alt = '生成图片';
+          im.loading = 'lazy';
+          im.decoding = 'async';
+          im.style = 'aspect-ratio:1/1;object-fit:cover;width:100%;';
           placeholder.replaceWith(im);
         }
-      } else {
+      } else if (imgEl.src !== src) {
         imgEl.src = src;
       }
     }
@@ -321,11 +325,27 @@ const stopPollingRecord = (recordId) => {
   activeRecordPollers.delete(key);
 };
 
-const pollRecordStatus = async (recordId, interval = 3000) => {
+// Global visibility flag — pause all polling when tab is hidden
+let pollingPaused = false;
+document.addEventListener('visibilitychange', () => {
+  pollingPaused = document.visibilityState === 'hidden';
+  if (pollingPaused) {
+    activeRecordPollers.forEach((timer, key) => {
+      clearTimeout(timer);
+      activeRecordPollers.delete(key);
+    });
+  }
+});
+
+const pollRecordStatus = async (recordId, interval = 5000) => {
   const key = String(recordId || "");
   if (!key || activeRecordPollers.has(key)) return;
 
   const run = async () => {
+    if (pollingPaused) {
+      activeRecordPollers.set(key, setTimeout(run, interval));
+      return;
+    }
     activeRecordPollers.delete(key);
     try {
       const response = await fetch(`/check_record?id=${encodeURIComponent(key)}`);
@@ -336,16 +356,21 @@ const pollRecordStatus = async (recordId, interval = 3000) => {
       syncRecordCard(data.record);
       refreshOpenRecordDialog(data.record);
 
-      if (data.status === "queued" || data.status === "running") {
+      const finalStatus = data.record?.status;
+      if (finalStatus === 'queued' || finalStatus === 'running') {
         activeRecordPollers.set(key, setTimeout(run, interval));
         return;
       }
 
-      if (data.status === "failed") {
+      // succeeded or failed — stop polling
+      stopPollingRecord(key);
+      if (finalStatus === 'failed') {
         showResultDialog(data.record);
       }
     } catch (_) {
-      activeRecordPollers.set(key, setTimeout(run, interval));
+      if (!pollingPaused) {
+        activeRecordPollers.set(key, setTimeout(run, interval));
+      }
     }
   };
 
@@ -353,6 +378,7 @@ const pollRecordStatus = async (recordId, interval = 3000) => {
 };
 
 const resumePendingRecords = async () => {
+  if (pollingPaused) return;
   try {
     const response = await fetch("/check_running_records");
     const data = await response.json();
@@ -361,17 +387,18 @@ const resumePendingRecords = async () => {
     if (data.credits !== undefined) updateCredits(data.credits);
     data.records.forEach((record) => {
       syncRecordCard(record);
-      pollRecordStatus(record.id, 2000);
+      pollRecordStatus(record.id, 5000);
     });
   } catch (_) {}
 };
 
 const inspectRecentRecords = () => {
+  if (pollingPaused) return;
   const cards = Array.from(document.querySelectorAll(".media-card[data-record-id]")).slice(0, 5);
   cards.forEach((card) => {
     const status = card.dataset.status || "";
     if (status === "queued" || status === "running") {
-      pollRecordStatus(card.dataset.recordId, 1500);
+      pollRecordStatus(card.dataset.recordId, 5000);
     }
   });
 };

@@ -268,6 +268,111 @@ function api_save_binary_file(string $binary, string $format, string $bucket): s
 }
 
 /**
+ * Generate a thumbnail from a local image file and save it.
+ *
+ * Falls back gracefully if GD is unavailable or thumbnail creation fails.
+ * Does NOT throw — caller should continue with original file if thumbnail fails.
+ *
+ * @param  string $originalPath  Local filesystem path to the original image.
+ * @param  string $mime         Detected MIME type (image/jpeg, image/png, image/webp).
+ * @return string|null         Relative URL path to the thumbnail, or null on failure.
+ */
+function generate_thumbnail(string $originalPath, string $mime): ?string
+{
+    if (!is_file($originalPath) || !is_readable($originalPath)) {
+        return null;
+    }
+
+    if (!function_exists('imagecreatetruecolor')) {
+        return null;
+    }
+
+    $targetWidth = 480;
+    $targetHeight = 480;
+
+    $src = null;
+    switch ($mime) {
+        case 'image/jpeg':
+        case 'image/jpg':
+            $src = @imagecreatefromjpeg($originalPath);
+            break;
+        case 'image/png':
+            $src = @imagecreatefrompng($originalPath);
+            break;
+        case 'image/webp':
+            $src = @imagecreatefromwebp($originalPath);
+            break;
+    }
+
+    if ($src === false || $src === null) {
+        return null;
+    }
+
+    $srcW = imagesx($src);
+    $srcH = imagesy($src);
+    if ($srcW <= 0 || $srcH <= 0) {
+        imagedestroy($src);
+        return null;
+    }
+
+    // Square crop: take the smaller dimension as the crop size
+    $cropSize = min($srcW, $srcH);
+    $srcX = (int) (($srcW - $cropSize) / 2);
+    $srcY = (int) (($srcH - $cropSize) / 2);
+
+    $thumb = @imagecreatetruecolor($targetWidth, $targetHeight);
+    if ($thumb === false) {
+        imagedestroy($src);
+        return null;
+    }
+
+    // Fill with white background (transparency for PNG)
+    imagefill($thumb, 0, 0, imagecolorallocate($thumb, 255, 255, 255));
+    imagecopyresampled(
+        $thumb, $src,
+        0, 0, $srcX, $srcY,
+        $targetWidth, $targetHeight,
+        $cropSize, $cropSize
+    );
+
+    $thumbDir = dirname($originalPath);
+    $thumbFilename = 'thumb_' . basename($originalPath);
+    // Preserve format: PNG > JPEG for alpha; JPEG > PNG for size
+    $usePng = ($mime === 'image/png' || $mime === 'image/webp');
+    $thumbPath = $thumbDir . '/' . $thumbFilename;
+    $saved = false;
+    if ($usePng) {
+        $saved = @imagepng($thumb, $thumbPath, 8);
+        if (!$saved) {
+            $thumbFilename = preg_replace('/\.\w+$/', '.jpg', $thumbFilename);
+            $thumbPath = $thumbDir . '/' . $thumbFilename;
+            $saved = @imagejpeg($thumb, $thumbPath, 80);
+        }
+    } else {
+        $saved = @imagejpeg($thumb, $thumbPath, 82);
+        if (!$saved) {
+            $thumbFilename = preg_replace('/\.\w+$/', '.png', $thumbFilename);
+            $thumbPath = $thumbDir . '/' . $thumbFilename;
+            $saved = @imagepng($thumb, $thumbPath, 8);
+        }
+    }
+
+    imagedestroy($src);
+    imagedestroy($thumb);
+
+    if (!$saved || !is_file($thumbPath)) {
+        return null;
+    }
+
+    // Return relative path from public/
+    $publicDir = realpath(dirname($originalPath) . '/../..');
+    if ($publicDir !== false && str_starts_with($thumbPath, $publicDir)) {
+        return '/uploads/' . substr($thumbPath, strlen($publicDir) + 1);
+    }
+    return null;
+}
+
+/**
  * 构建 API URL（避免 /v1/v1/ 重复路径问题）
  *
  * @param  string $baseUrl 基础地址（可能带 /v1）

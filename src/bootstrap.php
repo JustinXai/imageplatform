@@ -636,6 +636,10 @@ function ensure_generation_records_video_columns(): void
         db()->exec('ALTER TABLE generation_records ADD COLUMN generation_config_snapshot LONGTEXT NULL AFTER ai_model_id');
     }
 
+    if (empty($columns['thumb_url'])) {
+        db()->exec('ALTER TABLE generation_records ADD COLUMN thumb_url VARCHAR(500) NULL AFTER output_url');
+    }
+
     $checked = true;
 }
 
