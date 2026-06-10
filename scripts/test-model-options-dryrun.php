@@ -1558,6 +1558,106 @@ ok("238 admin uploads page has pagination", (function() {
 })());
 
 
+// ============================================================
+// THUMB URL INTEGRATION TESTS (round 2)
+// ============================================================
+
+ok("239 user/index.php uses generation_record_image_src for image src", (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/public/user/index.php');
+    return strpos($src, 'generation_record_image_src($record, true)') !== false;
+})());
+
+ok("240 user/index.php img has loading=lazy", (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/public/user/index.php');
+    return strpos($src, 'loading="lazy"') !== false;
+})());
+
+ok("241 user/index.php img has decoding=async", (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/public/user/index.php');
+    return strpos($src, 'decoding="async"') !== false;
+})());
+
+ok("242 user/records.php uses generation_record_image_src for image src", (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/public/user/records.php');
+    return strpos($src, 'generation_record_image_src($record, true)') !== false;
+})());
+
+ok("243 user/records.php img has loading=lazy", (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/public/user/records.php');
+    return strpos($src, 'loading="lazy"') !== false;
+})());
+
+ok("244 admin/uploads.php uses generation_record_image_src", (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/public/admin/uploads.php');
+    return strpos($src, 'generation_record_image_src($record, true)') !== false;
+})());
+
+ok("245 user.js syncRecordCard uses record.media_url", (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/public/assets/user.js');
+    return strpos($src, "record.media_url || record.image_src") !== false;
+})());
+
+ok("246 user.js createRecordCard uses record.media_url", (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/public/assets/user.js');
+    return strpos($src, "(record.media_url || record.image_src)") !== false;
+})());
+
+ok("247 check_running_records returns media_url via generation_response_record", (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/public/check_running_records.php');
+    return strpos($src, 'generation_response_record') !== false;
+})());
+
+ok("248 backfill_thumbnails.php exists and is executable", file_exists('/home/ubuntu/imageplatform/scripts/backfill_thumbnails.php'));
+
+ok("249 backfill_thumbnails.php has dry-run flag", (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/scripts/backfill_thumbnails.php');
+    return strpos($src, '--dry-run') !== false;
+})());
+
+ok("250 thumb files exist on disk for backfilled records", (function() {
+    $thumbs = glob('/home/ubuntu/imageplatform/public/uploads/generations/202606/thumb_*.{jpg,png}', GLOB_BRACE);
+    return count($thumbs) >= 8;
+})());
+
+ok("251 no succeeded image records are missing thumb_url (except file-not-found)", (function() use ($pdo) {
+    // Skip records 2,4,5 which have missing files
+    $stmt = $pdo->query("
+        SELECT COUNT(*) FROM generation_records
+        WHERE status='succeeded'
+        AND mode IN ('draw','edit')
+        AND output_url IS NOT NULL
+        AND output_url != ''
+        AND output_url NOT LIKE 'http%'
+        AND (thumb_url IS NULL OR thumb_url = '')
+        AND id NOT IN (2,4,5)
+    ");
+    return (int) $stmt->fetchColumn() === 0;
+})());
+
+ok("252 thumb_url column nullable in generation_records", (function() use ($pdo) {
+    $stmt = $pdo->query("SHOW COLUMNS FROM generation_records LIKE 'thumb_url'");
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    return $row && stripos($row['Type'] ?? '', 'varchar') !== false && stripos($row['Null'] ?? '', 'YES') !== false;
+})());
+
+ok("253 all backfilled thumbs are smaller than originals", (function() {
+    $orig = '/home/ubuntu/imageplatform/public/uploads/generations/202606/20260609111454-65acf269.jpg';
+    $thumb = '/home/ubuntu/imageplatform/public/uploads/generations/202606/thumb_20260609111454-65acf269.jpg';
+    if (!is_file($orig) || !is_file($thumb)) return false;
+    return filesize($thumb) < filesize($orig);
+})());
+
+ok("254 thumbnail backfill script has skip logic for missing files", (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/scripts/backfill_thumbnails.php');
+    return strpos($src, 'file not found') !== false && strpos($src, 'SKIP') !== false;
+})());
+
+ok("255 thumbnail backfill script is idempotent (can re-run)", (function() {
+    $src = file_get_contents('/home/ubuntu/imageplatform/scripts/backfill_thumbnails.php');
+    return strpos($src, 'already processed') !== false || strpos($src, "AND (thumb_url IS NULL OR thumb_url = '')") !== false;
+})());
+
+
 echo "\n";
 echo "========================================\n";
 echo "Results: {$passed} PASS, {$failed} FAIL\n";

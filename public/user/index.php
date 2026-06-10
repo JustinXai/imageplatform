@@ -218,7 +218,7 @@ render_header('图片生成器', 'app');
                         <?php $recDuration = (int) ($record['selected_duration'] ?? 0); ?>
                         <?php $recVideoMode = trim((string) ($record['selected_video_mode'] ?? '')); ?>
                         <?php $videoSrc = ($isVideo && !empty($record['video_url'])) ? htmlspecialchars($record['video_url']) : ''; ?>
-                        <?php $imageSrc = (!$isVideo && !empty($record['output_url'])) ? htmlspecialchars($record['output_url']) : ''; ?>
+                        <?php $imageSrc = (!$isVideo) ? htmlspecialchars(generation_record_image_src($record, true)) : ''; ?>
                         <article class="media-card" tabindex="0"
                             data-record-id="<?= (int) $record['id'] ?>"
                             data-status="<?= e($record['status']) ?>"
@@ -239,9 +239,9 @@ render_header('图片生成器', 'app');
                             data-selected-aspect="<?= e($record['selected_aspect'] ?? '') ?>"
                             style="cursor:pointer;">
                             <?php if ($isVideo && $videoSrc): ?>
-                                <video src="<?= e($videoSrc) ?>" controls></video>
+                                <video src="<?= e($videoSrc) ?>" controls preload="metadata"></video>
                             <?php elseif ($imageSrc): ?>
-                                <img src="<?= e($imageSrc) ?>" alt="生成图片">
+                                <img src="<?= e($imageSrc) ?>" alt="生成图片" loading="lazy" decoding="async" style="aspect-ratio:1/1;object-fit:cover;width:100%;">
                             <?php else: ?>
                                 <div style="width:100%;aspect-ratio:1;display:grid;place-items:center;background:var(--main-surface-soft);color:var(--text-muted);font-weight:700;font-size:13px;">
                                     <span class="status-badge <?= e($record['status']) ?>"><?= e(generation_status_label((string) $record['status'])) ?></span>

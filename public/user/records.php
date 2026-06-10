@@ -111,12 +111,12 @@ render_header('生成记录', 'records');
 <?php
                                     $recIsVideo2 = ($record['mode'] ?? 'draw') === 'video';
                                     $vSrc2 = $recIsVideo2 && !empty($record['video_url']) ? htmlspecialchars($record['video_url']) : '';
-                                    $iSrc2 = !$recIsVideo2 && !empty($record['output_url']) ? htmlspecialchars($record['output_url']) : '';
+                                    $iSrc2 = !$recIsVideo2 ? htmlspecialchars(generation_record_image_src($record, true)) : '';
                                     ?>
                                     <?php if ($recIsVideo2 && $vSrc2): ?>
-                                        <video src="<?= e($vSrc2) ?>" controls></video>
+                                        <video src="<?= e($vSrc2) ?>" controls preload="metadata"></video>
                                     <?php elseif ($iSrc2): ?>
-                                        <img src="<?= e($iSrc2) ?>" alt="生成图片">
+                                        <img src="<?= e($iSrc2) ?>" alt="生成图片" loading="lazy" decoding="async" style="aspect-ratio:1/1;object-fit:cover;width:100%;">
                                     <?php else: ?>
                                         <div style="display:grid;place-items:center;aspect-ratio:1;background:var(--main-surface-soft);color:var(--text-muted);font-weight:700;"><?= e(generation_status_label((string) $record['status'])) ?></div>
                                     <?php endif; ?>

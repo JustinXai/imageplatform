@@ -456,9 +456,10 @@ render_admin_nav('uploads');
             <div class="upload-grid">
                 <?php foreach ($records as $record): ?>
                     <?php $isDeleted = !empty($record['deleted_at']); ?>
+                    <?php $genSrc = generation_record_image_src($record, true); ?>
                     <div class="upload-card" style="<?= $isDeleted ? 'opacity:0.5' : '' ?>">
                         <div class="thumb">
-                            <img src="<?= e($record['output_url']) ?>" alt="生成图片"
+                            <img src="<?= e($genSrc ?: $record['output_url']) ?>" alt="生成图片" loading="lazy" decoding="async"
                                  onerror="this.style.display='none';this.nextElementSibling.style.display='grid'">
                             <span class="no-img" style="display:none">文件丢失</span>
                         </div>

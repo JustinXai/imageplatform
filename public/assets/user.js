@@ -183,8 +183,8 @@ const createRecordCard = (record) => {
   article.innerHTML = `
     ${record.video_src
       ? `<video src="${escapeHtml(record.video_src)}" controls preload="metadata"></video>`
-      : record.image_src
-        ? `<img src="${escapeHtml(record.image_src)}" alt="生成图片" loading="lazy" decoding="async" style="aspect-ratio:1/1;object-fit:cover;width:100%;">`
+      : (record.media_url || record.image_src)
+        ? `<img src="${escapeHtml(record.media_url || record.image_src)}" alt="生成图片" loading="lazy" decoding="async" style="aspect-ratio:1/1;object-fit:cover;width:100%;">`
         : `<div style="width:100%;aspect-ratio:1;display:grid;place-items:center;background:var(--main-surface-soft);color:var(--text-muted);font-weight:700;font-size:13px;"><span class="status-badge ${escapeHtml(record.status)}">${escapeHtml(statusText(record.status))}</span></div>`
     }
     <div class="media-card-body">
@@ -262,8 +262,8 @@ const syncRecordCard = (record) => {
       } else if (videoEl.src !== record.video_src) {
         videoEl.src = record.video_src;
       }
-    } else if (record.image_src || record.output_url) {
-      const src = record.image_src || record.output_url || '';
+    } else if (record.media_url || record.image_src || record.output_url) {
+      const src = record.media_url || record.image_src || record.output_url || '';
       let imgEl = card.querySelector('img');
       if (!imgEl) {
         const placeholder = card.querySelector('div[style*="aspect-ratio"]');
