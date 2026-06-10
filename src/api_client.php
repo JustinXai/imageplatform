@@ -535,6 +535,7 @@ function has_result_url(array $pollData): bool
         ?? $pollData['result_url']
         ?? $pollData['output_url']
         ?? ($pollData['metadata']['result_urls'][0] ?? null)
+        ?? ($pollData['metadata']['urls'][0] ?? null)
         ?? ($pollData['metadata']['url'] ?? null)
         ?? ($pollData['data']['url'] ?? null)
         ?? ($pollData['data']['image_url'] ?? null)
@@ -542,4 +543,26 @@ function has_result_url(array $pollData): bool
         ?? ($pollData['image']['url'] ?? null)
         ?? null;
     return is_string($url) && $url !== '' && filter_var($url, FILTER_VALIDATE_URL) !== false;
+}
+
+/**
+ * 判断轮询结果是否为图片（而非视频）。
+ */
+function is_image_result(array $data): bool
+{
+    $mime = $data['mime_type'] ?? $data['content_type'] ?? $data['file_type'] ?? null;
+    if (is_string($mime) && str_starts_with($mime, 'image/')) {
+        return true;
+    }
+    if (is_string($mime) && str_starts_with($mime, 'video/')) {
+        return false;
+    }
+    foreach (['url', 'image_url', 'output_url', 'video_url', 'result_url'] as $field) {
+        $v = $data[$field] ?? null;
+        if (is_string($v)) {
+            if (preg_match('/\.(jpg|jpeg|png|webp|gif|svg)\?/i', $v)) return true;
+            if (preg_match('/\.(mp4|mov|avi|mkv|webm)\?/i', $v)) return false;
+        }
+    }
+    return true;
 }

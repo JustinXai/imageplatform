@@ -1586,13 +1586,150 @@ function remote_file_head(string $url, int $timeout = 20): array
  * @param int    $timeout
  * @return array  api_curl_post_json compatible response
  */
+/**
+ * 从 Image2 chat 响应中提取图片 URL 或 base64。
+ * 兼容多种字段路径。
+ */
+function image2_extract_result(array $data): ?array
+{
+    // 1. choices[0].message.content — 纯文本 URL
+    $content = $data['choices'][0]['message']['content'] ?? null;
+    if (is_string($content) && $content !== '') {
+        // markdown 图片: ![alt](url)
+        if (preg_match('/!\[.*?\]\(((data:[^;]+;base64,[^\s)]+)|(https?:\/\/[^\s)]+))\)/', $content, $m)) {
+            $matched = $m[1];
+            if (str_starts_with($matched, 'data:')) {
+                $parts = explode(',', $matched, 2);
+                return ['b64_json' => ($parts[1] ?? '')];
+            }
+            return ['url' => $matched];
+        }
+        // 纯文本 URL
+        if (str_starts_with($content, 'http') || str_starts_with($content, '/')) {
+            return ['url' => $content];
+        }
+        // 纯 base64 字符串
+        if (preg_match('/^[A-Za-z0-9+\/=]+$/', $content) && strlen($content) > 100) {
+            return ['b64_json' => $content];
+        }
+    }
+
+    // 2. choices[0].message.image_url
+    $imgUrl = $data['choices'][0]['message']['image_url'] ?? null;
+    if (is_string($imgUrl) && $imgUrl !== '') {
+        return ['url' => $imgUrl];
+    }
+
+    // 3. choices[0].message.images[0].url
+    $imgList = $data['choices'][0]['message']['images'] ?? null;
+    if (is_array($imgList) && !empty($imgList)) {
+        $first = $imgList[0];
+        if (is_string($first)) {
+            return ['url' => $first];
+        }
+        if (is_array($first) && !empty($first['url'])) {
+            return ['url' => $first['url']];
+        }
+    }
+
+    // 4. choices[0].message.content[i].image_url.url
+    $contentItems = $data['choices'][0]['message']['content'] ?? null;
+    if (is_array($contentItems)) {
+        foreach ($contentItems as $item) {
+            if (!is_array($item)) continue;
+            $url = $item['image_url']['url'] ?? $item['url'] ?? null;
+            if (is_string($url) && $url !== '') {
+                return ['url' => $url];
+            }
+            $b64 = $item['image_url']['b64_json'] ?? $item['b64_json'] ?? null;
+            if (is_string($b64) && $b64 !== '') {
+                return ['b64_json' => $b64];
+            }
+        }
+    }
+
+    // 5. choices[0].message.b64_json (direct)
+    $b64 = $data['choices'][0]['message']['b64_json'] ?? null;
+    if (is_string($b64) && $b64 !== '') {
+        return ['b64_json' => $b64];
+    }
+
+    // 6. Top-level data/images/output/files arrays
+    $arrays = [
+        $data['data'] ?? null,
+        $data['images'] ?? null,
+        $data['output'] ?? null,
+        $data['files'] ?? null,
+    ];
+    foreach ($arrays as $arr) {
+        if (is_array($arr) && !empty($arr)) {
+            $first = is_array($arr[0]) ? $arr[0] : ['url' => $arr[0]];
+            $url = $first['url'] ?? $first['image_url'] ?? $first['b64_json'] ?? null;
+            if (is_string($url) && $url !== '') {
+                if ($url !== $first['b64_json']) {
+                    return ['url' => $url];
+                }
+                return ['b64_json' => $url];
+            }
+        }
+    }
+
+    // 7. Single URL fields
+    $urlFields = ['url', 'image_url', 'output_url', 'result_url'];
+    foreach ($urlFields as $field) {
+        $v = $data[$field] ?? null;
+        if (is_string($v) && (str_starts_with($v, 'http') || str_starts_with($v, '/'))) {
+            return ['url' => $v];
+        }
+    }
+
+    // 8. metadata.result_urls
+    $metaUrls = $data['metadata']['result_urls'] ?? $data['metadata']['urls'] ?? null;
+    if (is_array($metaUrls) && !empty($metaUrls) && is_string($metaUrls[0])) {
+        return ['url' => $metaUrls[0]];
+    }
+
+    return null;
+}
+
+/**
+ * 从 Image2 chat 响应中提取异步任务 ID（如果有）。
+ */
+function image2_extract_task_id(array $data): string
+{
+    $candidates = [
+        $data['id'] ?? null,
+        $data['task_id'] ?? null,
+        $data['request_id'] ?? null,
+        $data['job_id'] ?? null,
+        $data['data']['id'] ?? null,
+        $data['data']['task_id'] ?? null,
+        $data['data']['request_id'] ?? null,
+        $data['id'] ?? null,
+    ];
+    foreach ($candidates as $candidate) {
+        if (is_string($candidate) && trim($candidate) !== '') {
+            return trim($candidate);
+        }
+    }
+    return '';
+}
+
+/**
+ * Image2 适配器：POST /v1/chat/completions，messages 格式。
+ *
+ * 支持三类响应：
+ * A. 同步 URL / base64：直接返回
+ * B. 异步 task_id：throw ImageEditTaskQueuedException 进入轮询
+ * C. cURL 超时：返回 curl 错误让 decode_response 抛异常（不扣费）
+ */
 function call_image2_chat_image(string $baseUrl, string $apiKey, array $record, int $timeout = 60): array
 {
     $model = trim((string) ($record['model'] ?? ''));
     $prompt = trim((string) ($record['prompt'] ?? ''));
 
     if ($model === '' || $prompt === '') {
-        throw new RuntimeException('Image2 适配器：模型名称或提示词为空。');
+        throw new RuntimeException('图片生成失败：Image2 适配器参数不完整（模型或提示词为空）。请联系管理员。');
     }
 
     $endpoint = safe_join_api_url($baseUrl, '/v1/chat/completions');
@@ -1605,6 +1742,7 @@ function call_image2_chat_image(string $baseUrl, string $apiKey, array $record, 
         'url' => $endpoint,
         'model' => $model,
         'prompt_len' => mb_strlen($prompt, 'UTF-8'),
+        'timeout' => $timeout,
     ]);
 
     $authType = strtolower(trim((string) ($record['auth_type'] ?? 'bearer')));
@@ -1629,72 +1767,100 @@ function call_image2_chat_image(string $baseUrl, string $apiKey, array $record, 
     $curlErr = curl_error($ch);
     curl_close($ch);
 
+    // cURL 超时或网络错误：返回让 decode_response 抛异常（不扣费）
     if ($curlErr !== '') {
+        Logger::warning('IMAGE2_CURL_ERROR', ['error' => $curlErr, 'http_code' => $httpCode]);
         return [
-            'raw' => $curlErr,
-            'http_code' => 0,
-            'content_type' => '',
+            'raw' => '{"error":{"message":"Image2 接口响应超时，请稍后重试。","code":"timeout"}}',
+            'http_code' => $httpCode > 0 ? $httpCode : 0,
+            'content_type' => 'application/json',
             'error' => $curlErr,
         ];
     }
 
     $data = json_decode((string) $raw, true);
 
-    // Check for upstream API errors
-    if (is_array($data) && isset($data['error'])) {
-        $err = $data['error'];
-        $errMsg = is_array($err) ? ($err['message'] ?? json_encode($err)) : (string) $err;
-        // Clean error for user display — no raw JSON dump
-        $displayMsg = api_error_message($data, 'Image2 接口返回错误');
-        if (stripos($errMsg, 'messages') !== false && stripos($errMsg, 'required') !== false) {
-            throw new RuntimeException('图片生成失败：当前模型接口配置异常（messages 字段错误）。请联系管理员检查 Image2 适配器配置。');
+    // HTTP 错误或 API 错误
+    if ($httpCode < 200 || $httpCode >= 300 || (is_array($data) && isset($data['error']))) {
+        if (is_array($data) && isset($data['error'])) {
+            $err = $data['error'];
+            $errMsg = is_array($err) ? ($err['message'] ?? '') : (string) $err;
+            if (stripos($errMsg, 'messages') !== false && stripos($errMsg, 'required') !== false) {
+                throw new RuntimeException('图片生成失败：Image2 接口配置错误，当前接口要求 messages 格式。请联系管理员检查模型配置。');
+            }
+            throw new RuntimeException('图片生成失败：' . $errMsg);
         }
-        throw new RuntimeException('图片生成失败：' . $displayMsg);
-    }
-
-    if ($httpCode < 200 || $httpCode >= 300) {
-        $displayMsg = api_error_message($data ?? [], 'Image2 接口请求失败');
-        throw new RuntimeException('图片生成失败：' . $displayMsg);
+        throw new RuntimeException('图片生成失败：Image2 接口请求失败（HTTP ' . $httpCode . '）。请稍后重试。');
     }
 
     if (!is_array($data)) {
-        throw new RuntimeException('Image2 接口返回格式异常。');
+        throw new RuntimeException('图片生成失败：Image2 接口返回格式异常。');
     }
 
-    // Parse response: choices[0].message.content or b64_json
-    $content = null;
-    if (isset($data['choices'][0]['message']['content'])) {
-        $content = $data['choices'][0]['message']['content'];
-    } elseif (isset($data['choices'][0]['message']['b64_json'])) {
-        $content = base64_decode($data['choices'][0]['message']['b64_json'], true);
-    } elseif (isset($data['choices'][0]['message']['image_url'])) {
-        $content = $data['choices'][0]['message']['image_url'];
+    // 检查异步 task_id
+    $taskId = image2_extract_task_id($data);
+    if ($taskId !== '') {
+        // 有 task_id 说明是异步任务，需要轮询
+        Logger::info('IMAGE2_CHAT_TASK_ID', ['task_id' => $taskId, 'http_code' => $httpCode]);
+
+        // 检查是否有 image2_poll_endpoint 配置
+        $snapshotRaw = (string) ($record['generation_config_snapshot'] ?? '');
+        $snapshot = is_string($snapshotRaw) && $snapshotRaw !== '' ? @json_decode($snapshotRaw, true) : [];
+        $pollEndpoint = trim((string) ($snapshot['edit_poll_endpoint'] ?? config('image2.poll_endpoint', '')));
+        if ($pollEndpoint === '') {
+            throw new RuntimeException('图片生成失败：Image2 异步任务已提交（ID：' . $taskId . '），但系统未配置轮询端点，无法获取结果。请联系管理员配置 Image2 轮询端点。');
+        }
+
+        // 写入 remote_task_id，进入异步轮询流程
+        $recordId = (int) ($record['id'] ?? 0);
+        if ($recordId > 0) {
+            $pdo = db();
+            $stmt = $pdo->prepare(
+                "UPDATE generation_records
+                 SET remote_task_id = ?, status = 'running', started_at = NOW(), updated_at = NOW()
+                 WHERE id = ? AND status = 'queued'"
+            );
+            $stmt->execute([$taskId, $recordId]);
+        }
+
+        // 写入 edit_task_response 供轮询使用
+        $responseJson = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($recordId > 0) {
+            $pdo2 = db();
+            $stmt2 = $pdo2->prepare(
+                "UPDATE generation_records SET edit_task_response = ?, last_poll_at = NOW() WHERE id = ?"
+            );
+            $stmt2->execute([$responseJson, $recordId]);
+        }
+
+        throw new ImageEditTaskQueuedException($taskId, $responseJson, $baseUrl, $apiKey, $recordId);
     }
 
-    if ($content === null) {
-        throw new RuntimeException('Image2 接口返回数据格式无法解析，未找到图片内容。请检查模型是否正确配置。');
+    // 同步响应：提取图片 URL 或 base64
+    $result = image2_extract_result($data);
+    if ($result === null) {
+        $keys = is_array($data) ? implode(', ', array_keys($data)) : 'N/A';
+        throw new RuntimeException('图片生成失败：Image2 接口返回数据格式无法解析，未找到图片内容。返回字段：' . $keys . '。');
     }
 
-    // Return a synthetic response compatible with store_image_generation_data
-    if (is_string($content) && strlen($content) > 0 && (strpos($content, 'http') === 0 || strpos($content, '/') === 0)) {
-        // URL returned — treat as remote URL
+    if (isset($result['b64_json'])) {
+        Logger::info('IMAGE2_CHAT_BASE64', ['len' => strlen($result['b64_json'])]);
         return [
-            'raw' => json_encode(['url' => $content], JSON_UNESCAPED_UNICODE),
+            'raw' => json_encode(['b64_json' => $result['b64_json']], JSON_UNESCAPED_UNICODE),
             'http_code' => $httpCode,
             'content_type' => 'application/json',
             'error' => '',
         ];
-    } elseif (is_string($content) && strlen($content) > 100) {
-        // Likely base64 image data
-        return [
-            'raw' => json_encode(['b64_json' => $data['choices'][0]['message']['b64_json'] ?? ''], JSON_UNESCAPED_UNICODE),
-            'http_code' => $httpCode,
-            'content_type' => 'application/json',
-            'error' => '',
-        ];
     }
 
-    throw new RuntimeException('Image2 接口返回数据无法识别图片格式。');
+    // URL
+    Logger::info('IMAGE2_CHAT_URL', ['url' => $result['url']]);
+    return [
+        'raw' => json_encode(['url' => $result['url']], JSON_UNESCAPED_UNICODE),
+        'http_code' => $httpCode,
+        'content_type' => 'application/json',
+        'error' => '',
+    ];
 }
 
 
@@ -1938,39 +2104,64 @@ function poll_image_edit_task(string $baseUrl, string $apiKey, string $taskId, i
         }
         if (image_edit_task_is_success($status)) {
             // completed/success status reached — but /v1/videos may return completed
-            // before the URL field is populated. Wait a short grace period and re-poll.
+            // before the URL field is populated. Grace period: poll up to 3 times (15s max).
             Logger::info('IMAGE_EDIT_POLL_SUCCESS_STATUS', [
                 'task_id' => $taskId,
                 'status' => $status,
                 'pollData_keys' => array_keys($pollData),
-                'url_in_pollData' => ($pollData['url'] ?? null),
                 'has_result_url' => has_result_url($pollData),
             ]);
-            if (!has_result_url($pollData)) {
-                Logger::info('IMAGE_EDIT_POLL_COMPLETED_NO_URL', [
-                    'task_id' => $taskId,
-                    'status' => $status,
-                    'elapsed' => time() - $startTime,
-                    'waiting_grace' => 5,
-                ]);
-                sleep(5);
-                // Re-fetch latest state
-                $pollResponse2 = http_get_json($baseUrl . '/v1/videos/' . $taskId, $apiKey, $timeout);
-                $pollData2 = json_decode((string) ($pollResponse2['data'] ?? ''), true) ?: [];
-                $pollData = $pollData2;
-                $responseSummary2 = json_encode($pollData2, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-                $stmt2 = $pdo->prepare("UPDATE generation_records SET edit_task_response = ?, last_poll_at = NOW(), updated_at = NOW() WHERE id = ?");
-                $stmt2->execute([$responseSummary2, $recordId]);
-                if (!has_result_url($pollData2)) {
-                    Logger::warning('IMAGE_EDIT_POLL_STILL_NO_URL', [
+
+            $graceCount = 0;
+            $maxGrace = 3;
+            $graceDelay = 5;
+            $gracePollData = $pollData;
+
+            while ($graceCount < $maxGrace) {
+                if (has_result_url($gracePollData)) {
+                    Logger::info('IMAGE_EDIT_POLL_GRACE_URL_FOUND', [
                         'task_id' => $taskId,
-                        'poll2_status' => image_edit_task_status($pollData2),
+                        'grace_attempt' => $graceCount,
                     ]);
-                    throw new RuntimeException("上游任务已完成（status={$status}），但 poll 重试后仍未返回可用结果 URL。可能当前模型不支持该端点或返回格式不兼容。");
+                    break;
                 }
-                Logger::info('IMAGE_EDIT_POLL_URL_ARRIVED', ['task_id' => $taskId]);
-                return;
+                $graceCount++;
+                if ($graceCount >= $maxGrace) {
+                    Logger::warning('IMAGE_EDIT_POLL_GRACE_EXHAUSTED', [
+                        'task_id' => $taskId,
+                        'total_grace_attempts' => $maxGrace,
+                        'final_pollData_keys' => array_keys($gracePollData),
+                    ]);
+                    throw new RuntimeException('上游任务已完成（status=' . $status . '），等待 ' . ($maxGrace * $graceDelay) . ' 秒后仍未返回可用结果 URL。请稍后重试，或联系管理员检查模型配置。');
+                }
+                Logger::info('IMAGE_EDIT_POLL_GRACE_WAIT', [
+                    'task_id' => $taskId,
+                    'grace_attempt' => $graceCount,
+                    'waiting_seconds' => $graceDelay,
+                ]);
+                sleep($graceDelay);
+
+                // Re-fetch latest state
+                $pollUrlGrace = str_replace('{task_id}', rawurlencode($taskId), $pollUrlTemplate);
+                $ch2 = curl_init($pollUrlGrace);
+                curl_setopt_array($ch2, [
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_TIMEOUT => 30,
+                    CURLOPT_CONNECTTIMEOUT => 10,
+                    CURLOPT_HTTPHEADER => $headers,
+                ]);
+                $pollRaw2 = curl_exec($ch2);
+                $pollHttp2 = (int) curl_getinfo($ch2, CURLINFO_HTTP_CODE);
+                curl_close($ch2);
+
+                if ($pollHttp2 === 200 && $pollRaw2 !== '') {
+                    $gracePollData = json_decode((string) $pollRaw2, true) ?: $gracePollData;
+                    $responseSummary3 = json_encode($gracePollData, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                    $stmt3 = $pdo->prepare("UPDATE generation_records SET edit_task_response = ?, last_poll_at = NOW(), updated_at = NOW() WHERE id = ?");
+                    $stmt3->execute([$responseSummary3, $recordId]);
+                }
             }
+
             Logger::info('IMAGE_EDIT_POLL_COMPLETED', ['task_id' => $taskId, 'elapsed' => time() - $startTime]);
             return;
         }
@@ -2444,14 +2635,14 @@ function call_image_api(string $baseUrl, string $apiKey, array $record, int $tim
     Logger::info('CALL_IMAGE_API_DRAW', ['imageAdapter' => $imageAdapter, 'model' => ($record['model'] ?? 'N/A')]);
 
     if ($imageAdapter === 'banana_async_image') {
-        // Banana async: submit → async task → poll
+        // Banana async: submit → throw ImageEditTaskQueuedException → poll in perform_generation_record
         $submitResult = call_banana_async_image_submit($baseUrl, $apiKey, $record, $timeout);
-        return [
-            'raw' => json_encode(['task_id' => $submitResult['task_id'], 'status' => 'submitted'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-            'http_code' => 200,
-            'content_type' => 'application/json',
-            'error' => '',
-        ];
+        $taskId = (string) ($submitResult['task_id'] ?? '');
+        if ($taskId === '') {
+            throw new RuntimeException('Banana 异步图片任务已提交，但未返回任务 ID。');
+        }
+        $submitJson = json_encode($submitResult['data'] ?? [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        throw new ImageEditTaskQueuedException($taskId, $submitJson, $baseUrl, $apiKey, (int) ($record['id'] ?? 0));
     }
 
     if ($imageAdapter === 'image2_chat_image') {
@@ -3925,7 +4116,7 @@ function image_api_decode_response(array $apiResponse): array
 
         ];
 
-        $errMsg = $errorMap[$httpCode] ?? ('鍥剧墖鎺ュ彛鏈嶅姟閿欒锛圚TTP ' . $httpCode . '锛夛細' . $excerpt);
+        $errMsg = $errorMap[$httpCode] ?? ('图片生成接口服务错误（HTTP ' . $httpCode . '）：' . $excerpt);
 
 
 
@@ -3949,7 +4140,7 @@ function image_api_decode_response(array $apiResponse): array
 
     if ($raw === false || $raw === '') {
 
-        $errMsg = $curlError ?: '鍥剧墖鎺ュ彛鏃犲搷搴旓紙鍙兘鏄帴鍙ｈ秴鏃舵垨缃戠粶涓嶅彲杈撅級';
+        $errMsg = $curlError ?: '图片生成接口无响应（可能是接口超时或网络不可达）';
 
         Logger::error('API_CURL_ERROR', [
 
@@ -3995,7 +4186,7 @@ function image_api_decode_response(array $apiResponse): array
 
     if ($httpCode < 200 || $httpCode >= 300) {
 
-        throw new RuntimeException(image_api_error_message($data, '鍥剧墖鎺ュ彛杩斿洖 HTTP ' . $httpCode));
+        throw new RuntimeException(image_api_error_message($data, '图片生成接口返回 HTTP ' . $httpCode . ' 错误'));
 
     }
 
@@ -4003,7 +4194,7 @@ function image_api_decode_response(array $apiResponse): array
 
     if (isset($data['code']) && !in_array((int) $data['code'], [0, 200], true)) {
 
-        throw new RuntimeException(image_api_error_message($data, '鍥剧墖鎺ュ彛杩斿洖涓氬姟閿欒'));
+        throw new RuntimeException(image_api_error_message($data, '图片生成接口返回业务错误'));
 
     }
 
@@ -4488,10 +4679,12 @@ function perform_generation_record(int $recordId, ?int $timeout = null): array
 
         return generation_record_by_id($recordId);
     } catch (ImageEditTaskQueuedException $qe) {
-        // newtoken_async_reference 模式：任务已排队，开始轮询
-        Logger::info('NANO_BANANA_POLL_START', [
+        // Banana async 或 Image2 async 任务已排队，开始轮询
+        $imageAdapter = $config['image_adapter'] ?? '';
+        Logger::info('ASYNC_POLL_START', [
             'task_id' => $qe->taskId,
             'record_id' => $qe->recordId,
+            'adapter' => $imageAdapter,
             'base_url' => $qe->baseUrl,
         ]);
         try {
@@ -4508,10 +4701,35 @@ function perform_generation_record(int $recordId, ?int $timeout = null): array
             $stmtFail->execute([$errMsg, $qe->recordId]);
             throw $pollEx;
         }
-        // 轮询完成后，从记录中获取结果
-        $result = retrieve_image_edit_task_result($qe->recordId);
-        Logger::info('NANO_BANANA_RETRIEVE', ['record_id' => $qe->recordId, 'result_keys' => array_keys($result)]);
-        try { store_nano_banana_video_result($qe->recordId, $result, $record); return generation_record_by_id($qe->recordId); } catch (RuntimeException $storeEx) { $pdo3 = db(); $err3 = $storeEx->getMessage(); $stmt3 = $pdo3->prepare("UPDATE generation_records SET status = 'failed', error_message = ?, updated_at = NOW() WHERE id = ? AND status = 'running'"); $stmt3->execute([$err3, $qe->recordId]); throw $storeEx; }
+        // 轮询完成后，根据 adapter 类型存储结果
+        $pollData = retrieve_image_edit_task_result($qe->recordId);
+        Logger::info('ASYNC_POLL_COMPLETE', ['record_id' => $qe->recordId, 'adapter' => $imageAdapter, 'keys' => array_keys($pollData)]);
+
+        if ($imageAdapter === 'banana_async_image') {
+            // Banana：pollData 包含 URL，使用 image/video 存储逻辑
+            try {
+                store_nano_banana_video_result($qe->recordId, $pollData, $record);
+                return generation_record_by_id($qe->recordId);
+            } catch (RuntimeException $storeEx) {
+                $pdo3 = db();
+                $err3 = $storeEx->getMessage();
+                $stmt3 = $pdo3->prepare("UPDATE generation_records SET status = 'failed', error_message = ?, updated_at = NOW() WHERE id = ? AND status = 'running'");
+                $stmt3->execute([$err3, $qe->recordId]);
+                throw $storeEx;
+            }
+        } else {
+            // Image2 async：pollData 包含标准 API 格式，使用图片存储逻辑
+            try {
+                store_image_generation_data($qe->recordId, $pollData, $record);
+                return generation_record_by_id($qe->recordId);
+            } catch (RuntimeException $storeEx) {
+                $pdo3 = db();
+                $err3 = $storeEx->getMessage();
+                $stmt3 = $pdo3->prepare("UPDATE generation_records SET status = 'failed', error_message = ?, updated_at = NOW() WHERE id = ? AND status = 'running'");
+                $stmt3->execute([$err3, $qe->recordId]);
+                throw $storeEx;
+            }
+        }
     } catch (Throwable $e) {
 
         refund_generation_failure($pdo, $recordId, $e->getMessage(), 'RECOVERY_FAILED');
