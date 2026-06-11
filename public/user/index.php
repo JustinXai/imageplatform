@@ -17,9 +17,9 @@ $aiModels = active_ai_models();
 $hasGlobalImageConfig = trim((string) app_setting('image_base_url', '')) !== '' && trim((string) app_setting('image_api_key', '')) !== '';
 $noActiveModel = empty($aiModels) && !$hasGlobalImageConfig;
 $stmt = db()->prepare(
-    "SELECT id, user_id, status, mode, model, prompt, size, quality, output_format,
+     "SELECT id, user_id, status, mode, model, prompt, size, quality, output_format,
             input_images_json,
-            output_url, mime_type, credits_cost, error_message, started_at, finished_at,
+            output_url, thumb_url, mime_type, credits_cost, error_message, started_at, finished_at,
             deleted_at, created_at, output_base64 IS NOT NULL AS has_image_base64,
             video_url, video_mime_type, selected_duration, selected_video_mode, selected_aspect
      FROM generation_records

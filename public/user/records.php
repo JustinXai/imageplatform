@@ -31,7 +31,7 @@ $offset = ($page - 1) * $perPage;
 $stmt = db()->prepare(
     'SELECT id, user_id, status, mode, model, prompt, size, quality, output_format,
             input_images_json,
-            output_url, mime_type, credits_cost, error_message, started_at, finished_at,
+            output_url, thumb_url, mime_type, credits_cost, error_message, started_at, finished_at,
             deleted_at, created_at, output_base64 IS NOT NULL AS has_image_base64
      FROM generation_records
      WHERE user_id = ? AND deleted_at IS NULL' . $modeWhere . '
