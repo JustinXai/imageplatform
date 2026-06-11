@@ -219,6 +219,7 @@ render_header('图片生成器', 'app');
                         <?php $recVideoMode = trim((string) ($record['selected_video_mode'] ?? '')); ?>
                         <?php $videoSrc = ($isVideo && !empty($record['video_url'])) ? htmlspecialchars($record['video_url']) : ''; ?>
                         <?php $imageSrc = (!$isVideo) ? htmlspecialchars(generation_record_image_src($record, true)) : ''; ?>
+                        <?php $fullImageSrc = (!$isVideo) ? htmlspecialchars(generation_record_image_src($record, false)) : ''; ?>
                         <article class="media-card" tabindex="0"
                             data-record-id="<?= (int) $record['id'] ?>"
                             data-status="<?= e($record['status']) ?>"
@@ -234,6 +235,7 @@ render_header('图片生成器', 'app');
                             data-input-count="<?= (is_array(json_decode((string) ($record['input_images_json'] ?? ''), true)) ? count(json_decode((string) ($record['input_images_json'] ?? ''), true)) : 0) ?>"
                             data-video-src="<?= e($videoSrc) ?>"
                             data-image-src="<?= e($imageSrc) ?>"
+                            data-full-image-src="<?= e($fullImageSrc) ?>"
                             data-selected-duration="<?= $recDuration ?>"
                             data-selected-video-mode="<?= e($recVideoMode) ?>"
                             data-selected-aspect="<?= e($record['selected_aspect'] ?? '') ?>"

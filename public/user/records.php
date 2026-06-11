@@ -91,6 +91,10 @@ render_header('生成记录', 'records');
                         'running'   => 'running',
                         default     => '',
                     };
+                    $recIsVideo3 = ($record['mode'] ?? 'draw') === 'video';
+                    $vSrc3 = $recIsVideo3 && !empty($record['video_url']) ? htmlspecialchars($record['video_url']) : '';
+                    $iSrc3 = !$recIsVideo3 ? htmlspecialchars(generation_record_image_src($record, true)) : '';
+                    $fullImgSrc3 = !$recIsVideo3 ? htmlspecialchars(generation_record_image_src($record, false)) : '';
                     ?>
                     <article
                         class="media-card"
@@ -107,8 +111,11 @@ render_header('生成记录', 'records');
                         data-finished="<?= e($record['finished_at'] ?: '-') ?>"
                         data-error="<?= e($record['error_message'] ?: '') ?>"
                         data-input-count="<?= (is_array(@json_decode((string)($record['input_images_json']??''), true)) ? count(@json_decode((string)($record['input_images_json']??''), true)) : 0) ?>"
+                        data-video-src="<?= e($vSrc3) ?>"
+                        data-image-src="<?= e($iSrc3) ?>"
+                        data-full-image-src="<?= e($fullImgSrc3) ?>"
                     >
-<?php
+                                    <?php
                                     $recIsVideo2 = ($record['mode'] ?? 'draw') === 'video';
                                     $vSrc2 = $recIsVideo2 && !empty($record['video_url']) ? htmlspecialchars($record['video_url']) : '';
                                     $iSrc2 = !$recIsVideo2 ? htmlspecialchars(generation_record_image_src($record, true)) : '';

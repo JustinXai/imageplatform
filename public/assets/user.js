@@ -731,9 +731,34 @@ const openRecordDialog = (card) => {
         }
       }
     } else if (imageSrc) {
+      const fullSrc = card.dataset.fullImageSrc || card.dataset.imageSrc || "";
       const img = card.querySelector("img");
-      if (img) { const c = img.cloneNode(); c.style.cssText = "max-width:100%;max-height:300px;cursor:pointer;"; imgSec.appendChild(c); }
-      else { const c = document.createElement("img"); c.src = imageSrc; c.style.cssText = "max-width:100%;max-height:300px;cursor:pointer;"; imgSec.appendChild(c); }
+      if (img) {
+        const c = img.cloneNode();
+        c.style.cssText = "width:100%;height:auto;max-height:70vh;object-fit:contain;display:block;cursor:pointer;border-radius:8px;background:var(--main-surface-soft);";
+        c.onclick = () => { if (fullSrc) window.open(fullSrc, "_blank", "noopener,noreferrer"); };
+        imgSec.appendChild(c);
+      } else {
+        const c = document.createElement("img");
+        c.src = fullSrc || imageSrc;
+        c.style.cssText = "width:100%;height:auto;max-height:70vh;object-fit:contain;display:block;cursor:pointer;border-radius:8px;background:var(--main-surface-soft);";
+        c.onclick = () => { if (fullSrc) window.open(fullSrc, "_blank", "noopener,noreferrer"); };
+        imgSec.appendChild(c);
+      }
+      // Add "查看原图" button if full image is available
+      if (fullSrc && fullSrc !== imageSrc) {
+        const foot = d.querySelector(".record-dialog-foot");
+        if (foot) {
+          const origBtn = document.createElement("a");
+          origBtn.className = "btn btn-secondary btn-sm";
+          origBtn.href = fullSrc;
+          origBtn.target = "_blank";
+          origBtn.rel = "noopener noreferrer";
+          origBtn.textContent = "查看原图";
+          origBtn.style.cssText = "display:inline-flex;align-items:center;";
+          foot.insertBefore(origBtn, foot.querySelector("[data-share-gallery]") || foot.firstChild);
+        }
+      }
     }
   }
   const delForm = d.querySelector(".record-dialog-foot form");
