@@ -1263,6 +1263,57 @@ function image_storage_mode(): string
 
 
 
+
+
+/**
+ * 写入生成扣费账本记录（幂等，防止重复扣费）
+ *
+ * @param  PDO   $pdo         数据库连接（需在事务中）
+ * @param  int   $recordId    generation_records.id
+ * @param  int   $userId      用户 ID
+ * @param  int   $cost        扣费点数（正数）
+ * @param  int   $balanceBefore 扣费前余额
+ * @param  int   $balanceAfter  扣费后余额
+ * @param  string $modelName    模型名称（用于 reason）
+ * @return void
+ */
+function record_generation_charge_log(PDO $pdo, int $recordId, int $userId, int $cost, int $balanceBefore, int $balanceAfter, string $modelName = ''): void
+{
+    if ($recordId < 1 || $userId < 1 || $cost <= 0) {
+        return;
+    }
+
+    $check = $pdo->prepare(
+        "SELECT id FROM credit_logs WHERE ref_type = 'generation_record' AND ref_id = ? LIMIT 1"
+    );
+    $check->execute([(string) $recordId]);
+    if ($check->fetch()) {
+        return;
+    }
+
+    $reason = '图片生成扣费';
+    if ($modelName !== '') {
+        $reason = mb_substr('图片生成扣费：' . $modelName, 0, 255, 'UTF-8');
+    }
+
+    $insert = $pdo->prepare(
+        'INSERT INTO credit_logs (user_id, amount, balance_before, balance_after, type, source, ref_type, ref_id, admin_id, reason, ip_address, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NOW())'
+    );
+    $insert->execute([
+        $userId,
+        -$cost,
+        $balanceBefore,
+        $balanceAfter,
+        'generation_charge',
+        'system',
+        'generation_record',
+        (string) $recordId,
+        $reason,
+        '127.0.0.1',
+    ]);
+}
+
 /**
 
  * 鍒涘缓鐢熸垚璁板綍骞舵墸鍑忕Н鍒嗭紙浜嬪姟淇濇姢锛?
@@ -1303,8 +1354,6 @@ function create_generation_record(int $userId, array $params, string $status = '
 
     if ($cost === 0 && (string) $params['mode'] === 'video') {
 
-        $pdo->rollBack();
-
         throw new RuntimeException('视频模型未配置固定秒数或每秒点数，请联系管理员。');
 
     }
@@ -1330,6 +1379,9 @@ function create_generation_record(int $userId, array $params, string $status = '
         }
 
 
+
+        $balanceBefore = $credits;
+        $balanceAfter = $credits - $cost;
 
         $stmt = $pdo->prepare('UPDATE users SET credits = credits - ? WHERE id = ?');
 
@@ -1378,6 +1430,8 @@ function create_generation_record(int $userId, array $params, string $status = '
         ]);
 
         $recordId = (int) $pdo->lastInsertId();
+        $modelName = isset($params['model']) ? trim((string) $params['model']) : '';
+        record_generation_charge_log($pdo, $recordId, $userId, $cost, $balanceBefore, $balanceAfter, $modelName);
 
         $pdo->commit();
 
