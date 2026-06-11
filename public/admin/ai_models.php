@@ -78,10 +78,12 @@ function normalize_credit_input($raw, bool $allowNull = false, ?string $current 
 function normalize_int_input($raw, string $label, int $min, int $max, ?int $fallback = null): int
 {
     $value = trim((string) $raw);
-    if ($value === '') {
+    // Treat empty string or '0' (e.g. from curl POST of hidden field) as "no value provided"
+    if ($value === '' || $value === '0') {
         if ($fallback !== null) {
             return $fallback;
         }
+        // Use existing value if provided (e.g. from DB)
         throw new InvalidArgumentException($label . '不能为空。');
     }
     if (!preg_match('/^\d+$/', $value)) {
@@ -103,7 +105,7 @@ function normalize_aspect_options(string $raw, ?string $currentJson = null): arr
 {
     $allowed = ['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '21:9'];
     $raw = trim($raw);
-    if ($raw === '' && $currentJson !== null && trim($currentJson) !== '') {
+    if (($raw === '' || $raw === '0') && $currentJson !== null && trim($currentJson) !== '') {
         $parsed = parse_csv_options(safe_json_implode($currentJson));
         if (count($parsed) > 0) {
             $allValid = true;
@@ -124,17 +126,24 @@ function normalize_aspect_options(string $raw, ?string $currentJson = null): arr
 function normalize_duration_options(string $raw, ?string $currentJson = null): array
 {
     $raw = trim($raw);
-    if ($raw === '' && $currentJson !== null && trim($currentJson) !== '') {
-        $parsed = parse_csv_options(safe_json_implode($currentJson));
-        if (count($parsed) > 0) {
-            $allValid = true;
-            foreach ($parsed as $p) {
-                if (!preg_match('/^\d+$/', $p)) { $allValid = false; break; }
-                $v = (int) $p;
-                if ($v < 1 || $v > 120) { $allValid = false; break; }
+    // If raw is empty or '0' (e.g. hidden field with no value for image models),
+    // try to use the existing value from DB.
+    if ($raw === '' || $raw === '0') {
+        if ($currentJson !== null && trim($currentJson) !== '') {
+            $parsed = parse_csv_options(safe_json_implode($currentJson));
+            if (count($parsed) > 0) {
+                $allValid = true;
+                foreach ($parsed as $p) {
+                    if (!preg_match('/^\d+$/', $p)) { $allValid = false; break; }
+                    $v = (int) $p;
+                    if ($v < 1 || $v > 120) { $allValid = false; break; }
+                }
+                if ($allValid) return $parsed;
             }
-            if ($allValid) return $parsed;
         }
+        // Empty input for non-video models or when no existing value:
+        // Return empty array (will be encoded as null, which is valid for image models)
+        return [];
     }
     $options = parse_csv_options($raw);
     if (count($options) === 0) {
@@ -156,6 +165,10 @@ function normalize_duration_options(string $raw, ?string $currentJson = null): a
 
 function ensure_default_duration_in_options(int $default, array $options): int
 {
+    // If no options defined (e.g. image models), skip validation and use the default
+    if (count($options) === 0) {
+        return $default;
+    }
     $stringOptions = array_map('strval', $options);
     if (!in_array((string) $default, $stringOptions, true)) {
         throw new InvalidArgumentException('默认时长必须在可选时长列表内。');
@@ -166,7 +179,12 @@ function ensure_default_duration_in_options(int $default, array $options): int
 function resolve_hidden_json_csv(array $source, string $postKey, ?string $currentJson, array $fallback): ?string
 {
     if (array_key_exists($postKey, $source)) {
-        $opts = parse_csv_options((string) ($source[$postKey] ?? ''));
+        $raw = (string) ($source[$postKey] ?? '');
+        // Treat '0' as empty string (e.g. from curl POST of hidden field with no value)
+        if ($raw === '' || $raw === '0') {
+            return encode_json_or_null($fallback);
+        }
+        $opts = parse_csv_options($raw);
         if (count($opts) === 0) {
             $opts = $fallback;
         }
@@ -182,7 +200,11 @@ function resolve_hidden_scalar(array $source, string $postKey, ?string $currentV
 {
     if (array_key_exists($postKey, $source)) {
         $value = trim((string) ($source[$postKey] ?? ''));
-        return $value !== '' ? $value : $fallback;
+        // Treat '0' as empty string (e.g. from curl POST of hidden field with no value)
+        if ($value === '' || $value === '0') {
+            return $fallback;
+        }
+        return $value;
     }
     $currentValue = trim((string) $currentValue);
     return $currentValue !== '' ? $currentValue : $fallback;
@@ -271,7 +293,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $vidDurList = normalize_duration_options((string) ($_POST['video_duration_options'] ?? ''));
             $vidDurOpts = encode_json_or_null($vidDurList);
             $vidDefDur = ensure_default_duration_in_options(
-                normalize_int_input($_POST['video_default_duration'] ?? '', '默认时长', 1, 120),
+                normalize_int_input($_POST['video_default_duration'] ?? '', '默认时长', 1, 120, 10),
                 $vidDurList
             );
             $vidAspList = normalize_aspect_options((string) ($_POST['video_aspect_options'] ?? ''));
@@ -390,12 +412,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $vidDurList = normalize_duration_options((string) ($_POST['video_duration_options'] ?? safe_json_implode($existing['video_duration_options_json'] ?? null)), $existing['video_duration_options_json'] ?? null);
             $vidDurOpts = encode_json_or_null($vidDurList);
             $vidDefDur = ensure_default_duration_in_options(
-                normalize_int_input($_POST['video_default_duration'] ?? ($existing['video_default_duration'] ?? ''), '默认时长', 1, 120),
+                normalize_int_input($_POST['video_default_duration'] ?? ($existing['video_default_duration'] ?? ''), '默认时长', 1, 120, $existing['video_default_duration'] ?? null),
                 $vidDurList
             );
             $vidAspList = normalize_aspect_options((string) ($_POST['video_aspect_options'] ?? safe_json_implode($existing['video_aspect_options_json'] ?? null)), $existing['video_aspect_options_json'] ?? null);
             $vidAspOpts = encode_json_or_null($vidAspList);
             $vidDefAsp = trim((string) ($_POST['video_default_aspect'] ?? ($existing['video_default_aspect'] ?? '16:9')));
+            if ($vidDefAsp === '' || $vidDefAsp === '0') { $vidDefAsp = $existing['video_default_aspect'] ?? '16:9'; }
             if (!in_array($vidDefAsp, $vidAspList, true)) {
                 throw new InvalidArgumentException('默认比例必须在可选比例列表内。');
             }
@@ -406,7 +429,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $postModes = array_filter(array_map('trim', explode(',', (string) ($_POST['video_mode_options'] ?? safe_json_implode($existing['video_mode_options_json'] ?? null)))), fn($v) => $v !== '');
             $vidModeOpts = encode_json_or_null(array_values(array_filter($postModes, fn($v) => in_array($v, $allModeKeys, true))));
             $vidDefMode = in_array((string) ($_POST['video_default_mode'] ?? ($existing['video_default_mode'] ?? '')), $allModeKeys, true)
-                ? (string) ($_POST['video_default_mode'] ?? $existing['video_default_mode']) : 'text_to_video';
+                ? (string) ($_POST['video_default_mode'] ?: $existing['video_default_mode']) : 'text_to_video';
 
             $vidRefField = trim((string) ($_POST['video_reference_field'] ?? ($existing['video_reference_field'] ?? 'reference_images'))) ?: 'reference_images';
             $vidDurField = trim((string) ($_POST['video_duration_field'] ?? ($existing['video_duration_field'] ?? 'duration'))) ?: 'duration';
@@ -666,16 +689,33 @@ th { font-weight: 700; color: var(--text-soft); text-transform: uppercase; font-
   <td><input form="fupd-img-<?= $mid ?>" name="max_reference_images" type="text" inputmode="numeric" pattern="[0-9]*" class="compact-input model-num-input model-num-xs" value="<?= $maxRefImg ?>"></td>
   <td><input form="fupd-img-<?= $mid ?>" name="image_aspect_options" class="compact-input aspect-input" value="<?= e(implode(',', $imgAspOpts)) ?>" placeholder="auto,16:9,9:16"></td>
   <td>
+    <form method="post" id="fupd-img-<?= $mid ?>">
     <input type="hidden" form="fupd-img-<?= $mid ?>" name="csrf_token" value="<?= $csrf ?>">
     <input type="hidden" form="fupd-img-<?= $mid ?>" name="action" value="update_model">
     <input type="hidden" form="fupd-img-<?= $mid ?>" name="id" value="<?= $mid ?>">
     <input type="hidden" form="fupd-img-<?= $mid ?>" name="image_default_aspect" value="<?= e($imgDefAsp !== '' ? $imgDefAsp : 'auto') ?>">
     <input type="hidden" form="fupd-img-<?= $mid ?>" name="image_size_options" value="<?= e(implode(',', $imgSzOpts ?: ['auto'])) ?>">
     <input type="hidden" form="fupd-img-<?= $mid ?>" name="image_default_size" value="<?= e($imgDefSz !== '' ? $imgDefSz : 'auto') ?>">
+    <input type="hidden" form="fupd-img-<?= $mid ?>" name="video_duration_options" value="">
+    <input type="hidden" form="fupd-img-<?= $mid ?>" name="video_default_duration" value="">
+    <input type="hidden" form="fupd-img-<?= $mid ?>" name="video_aspect_options" value="">
+    <input type="hidden" form="fupd-img-<?= $mid ?>" name="video_default_aspect" value="16:9">
+    <input type="hidden" form="fupd-img-<?= $mid ?>" name="video_size_field" value="size">
+    <input type="hidden" form="fupd-img-<?= $mid ?>" name="video_mode_options" value="">
+    <input type="hidden" form="fupd-img-<?= $mid ?>" name="video_default_mode" value="text_to_video">
+    <input type="hidden" form="fupd-img-<?= $mid ?>" name="video_reference_field" value="reference_images">
+    <input type="hidden" form="fupd-img-<?= $mid ?>" name="video_duration_field" value="duration">
+    <input type="hidden" form="fupd-img-<?= $mid ?>" name="video_aspect_field" value="aspect_ratio">
+    <input type="hidden" form="fupd-img-<?= $mid ?>" name="video_input_mode_field" value="input_mode">
+    <input type="hidden" form="fupd-img-<?= $mid ?>" name="video_reference_video_field" value="extra_videos">
+    <input type="hidden" form="fupd-img-<?= $mid ?>" name="video_reference_audio_field" value="extra_audios">
+    </form>
+    <form method="post" id="fdel-img-<?= $mid ?>">
     <input type="hidden" form="fdel-img-<?= $mid ?>" name="csrf_token" value="<?= $csrf ?>">
     <input type="hidden" form="fdel-img-<?= $mid ?>" name="action" value="delete_model">
     <input type="hidden" form="fdel-img-<?= $mid ?>" name="id" value="<?= $mid ?>">
     <input type="hidden" form="fdel-img-<?= $mid ?>" name="confirm_delete" id="cd-img-<?= $mid ?>" value="0">
+    </form>
     <button type="submit" form="fupd-img-<?= $mid ?>" class="button secondary small">保存</button>
     <button type="button" class="button danger small" onclick="confirmDeleteModel(<?= $mid ?>, 'img')">删除</button>
   </td>
@@ -724,16 +764,20 @@ th { font-weight: 700; color: var(--text-soft); text-transform: uppercase; font-
     <?php endforeach; ?>
   </select></td>
   <td>
+    <form method="post" id="fupd-vid-<?= $mid ?>">
     <input type="hidden" form="fupd-vid-<?= $mid ?>" name="csrf_token" value="<?= $csrf ?>">
     <input type="hidden" form="fupd-vid-<?= $mid ?>" name="action" value="update_model">
     <input type="hidden" form="fupd-vid-<?= $mid ?>" name="id" value="<?= $mid ?>">
     <input type="hidden" form="fupd-vid-<?= $mid ?>" name="video_size_options" value="<?= e(implode(',', $szOpts ?: ['auto'])) ?>">
     <input type="hidden" form="fupd-vid-<?= $mid ?>" name="video_default_size" value="<?= e($defSz !== '' ? $defSz : 'auto') ?>">
     <input type="hidden" form="fupd-vid-<?= $mid ?>" name="video_size_field" value="<?= e(trim((string) ($m['video_size_field'] ?? 'size')) ?: 'size') ?>">
+    </form>
+    <form method="post" id="fdel-vid-<?= $mid ?>">
     <input type="hidden" form="fdel-vid-<?= $mid ?>" name="csrf_token" value="<?= $csrf ?>">
     <input type="hidden" form="fdel-vid-<?= $mid ?>" name="action" value="delete_model">
     <input type="hidden" form="fdel-vid-<?= $mid ?>" name="id" value="<?= $mid ?>">
     <input type="hidden" form="fdel-vid-<?= $mid ?>" name="confirm_delete" id="cd-vid-<?= $mid ?>" value="0">
+    </form>
     <button type="submit" form="fupd-vid-<?= $mid ?>" class="button secondary small">保存</button>
     <button type="button" class="button danger small" onclick="confirmDeleteModel(<?= $mid ?>, 'vid')">删除</button>
   </td>
@@ -753,13 +797,17 @@ th { font-weight: 700; color: var(--text-soft); text-transform: uppercase; font-
   <td><input form="fupd-chat-<?= $mid ?>" name="credits" type="text" inputmode="decimal" pattern="[0-9]+(\.[0-9]+)?" class="compact-input model-num-input model-num-sm" value="<?= e((string) ($m['credits'] ?? '')) ?>" placeholder="点数"></td>
   <td><select form="fupd-chat-<?= $mid ?>" name="is_active" class="compact-input" style="width:60px;"><option value="1" <?= $isActive===1?'selected':'' ?>>启用</option><option value="0" <?= $isActive!==1?'selected':'' ?>>关闭</option></select></td>
   <td>
+    <form method="post" id="fupd-chat-<?= $mid ?>">
     <input type="hidden" form="fupd-chat-<?= $mid ?>" name="csrf_token" value="<?= $csrf ?>">
     <input type="hidden" form="fupd-chat-<?= $mid ?>" name="action" value="update_model">
     <input type="hidden" form="fupd-chat-<?= $mid ?>" name="id" value="<?= $mid ?>">
+    </form>
+    <form method="post" id="fdel-chat-<?= $mid ?>">
     <input type="hidden" form="fdel-chat-<?= $mid ?>" name="csrf_token" value="<?= $csrf ?>">
     <input type="hidden" form="fdel-chat-<?= $mid ?>" name="action" value="delete_model">
     <input type="hidden" form="fdel-chat-<?= $mid ?>" name="id" value="<?= $mid ?>">
     <input type="hidden" form="fdel-chat-<?= $mid ?>" name="confirm_delete" id="cd-chat-<?= $mid ?>" value="0">
+    </form>
     <button type="submit" form="fupd-chat-<?= $mid ?>" class="button secondary small">保存</button>
     <button type="button" class="button danger small" onclick="confirmDeleteModel(<?= $mid ?>, 'chat')">删除</button>
   </td>
