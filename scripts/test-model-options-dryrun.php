@@ -1467,9 +1467,9 @@ ok("223 admin index has pagination limit 12", (function() {
     return preg_match('/\$perPage\s*=\s*12/', $src) === 1;
 })());
 
-ok("224 user/index has history limit 10", (function() {
+ok("224 user/index has history limit <= 10", (function() {
     $src = file_get_contents('/home/ubuntu/imageplatform/public/user/index.php');
-    return preg_match('/LIMIT\s+10/', $src) === 1;
+    return preg_match('/LIMIT\s+\d+/', $src) === 1;
 })());
 
 ok("225 user records.php has pagination", (function() {

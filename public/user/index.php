@@ -25,7 +25,7 @@ $stmt = db()->prepare(
      FROM generation_records
      WHERE user_id = ? AND deleted_at IS NULL
      ORDER BY created_at DESC
-     LIMIT 10"
+     LIMIT 8"
 );
 $stmt->execute([$user['id']]);
 $records = $stmt->fetchAll();

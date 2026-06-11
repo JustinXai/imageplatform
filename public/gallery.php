@@ -75,9 +75,12 @@ render_header('图片广场', 'gallery');
                      tabindex="0"
                 >
                     <?php if ($item['mode'] === 'video'): ?>
-                        <video src="<?= e($item['image_url']) ?>" muted preload="metadata"></video>
+                        <video src="<?= e($item['image_url']) ?>" muted preload="metadata" onerror="this.onerror=null; this.style.display='none'; this.nextElementSibling.style.display='grid';"></video>
+                        <div class="no-img" style="display:none">文件丢失</div>
                     <?php else: ?>
-                        <img src="<?= e($item['image_url']) ?>" alt="" loading="lazy">
+                        <img src="<?= e($item['image_url']) ?>" alt="" loading="lazy" decoding="async"
+                             style="aspect-ratio:1/1;object-fit:cover;width:100%;"
+                             onerror="this.onerror=null; this.src='/assets/placeholder-image.svg';">
                     <?php endif; ?>
                     <div class="media-card-body">
                         <div class="prompt"><?= e($item['prompt'] ?? '') ?></div>

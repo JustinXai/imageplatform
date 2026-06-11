@@ -60,7 +60,7 @@ foreach ($videoModels as $vm) {
     $modelDefaultMode[$vid] = trim((string) ($vm['video_default_mode'] ?? 'text_to_video'));
 }
 
-// Build JSON config for JS
+// Build JSON config for JS (name included for JS-side disambiguation if needed)
 $modelConfigJson = [];
 foreach ($videoModels as $vm) {
     $vid = (int) $vm['id'];
@@ -79,6 +79,9 @@ foreach ($videoModels as $vm) {
     $defaultCost = $credits * max(1, $defaultDuration);
 
     $modelConfigJson[$vid] = [
+        'id' => $vid,
+        'name' => $vm['name'] ?? '',
+        'model_id' => $vm['model_id'] ?? '',
         'duration_options' => array_values($dOpts),
         'default_duration' => $defaultDuration,
         'aspect_options' => array_values($aOpts),
@@ -94,6 +97,27 @@ foreach ($videoModels as $vm) {
         'default_cost' => $defaultCost,
         'supports_ref' => $modelSupportsRef[$vid] ?? 0,
     ];
+}
+
+// Build deduped labels: if same name appears >1 time, append (model_id) for disambiguation
+$nameCount = [];
+foreach ($videoModels as $vm) {
+    $n = $vm['name'] ?? '';
+    $nameCount[$n] = ($nameCount[$n] ?? 0) + 1;
+}
+$seenNames = [];
+$videoModelLabels = [];
+foreach ($videoModels as $vm) {
+    $vid = (int) $vm['id'];
+    $n = $vm['name'] ?? '';
+    $mid = $vm['model_id'] ?? '';
+    if (($nameCount[$n] ?? 0) > 1) {
+        // Duplicate name — append model_id in parentheses
+        $label = $n . ' (' . $mid . ')';
+    } else {
+        $label = $n;
+    }
+    $videoModelLabels[$vid] = $label;
 }
 
 // Recent records
@@ -174,7 +198,7 @@ render_header('视频生成', 'video');
                                 data-default-cost="<?= (int) ($cfg['default_cost'] ?? 0) ?>"
                                 data-max-ref="<?= (int) ($cfg['max_ref_images'] ?? 1) ?>"
                                 data-default-duration="<?= (int) ($cfg['default_duration'] ?? 0) ?>"
-                            ><?= e($m['name']) ?></option>
+                            ><?= e($videoModelLabels[$mid] ?? $m['name']) ?></option>
                             <?php endforeach; ?>
                         </select>
                     </div>
@@ -285,7 +309,10 @@ render_header('视频生成', 'video');
                         data-input-count="<?= $inputImageCount ?>"
                     >
                         <?php if ($videoSrc): ?>
-                        <video src="<?= e($videoSrc) ?>" controls></video>
+                        <video src="<?= e($videoSrc) ?>" controls preload="metadata" onerror="this.onerror=null; this.style.display='none'; this.nextElementSibling.style.display='flex';"></video>
+                        <div style="display:none;align-items:center;justify-content:center;aspect-ratio:16/9;background:var(--main-surface-soft);color:var(--text-muted);font-size:13px;">
+                            <span><?= e(generation_status_label((string) $record['status'])) ?></span>
+                        </div>
                         <?php else: ?>
                         <div style="display:flex;align-items:center;justify-content:center;aspect-ratio:1;background:var(--main-surface-soft);color:var(--text-muted);font-size:13px;">
                             <span><?= e(generation_status_label((string) $record['status'])) ?></span>
