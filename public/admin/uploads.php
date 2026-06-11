@@ -457,11 +457,15 @@ render_admin_nav('uploads');
                 <?php foreach ($records as $record): ?>
                     <?php $isDeleted = !empty($record['deleted_at']); ?>
                     <?php $genSrc = generation_record_image_src($record, true); ?>
+                    <?php $fallbackSrc = $genSrc ?: ($record['output_url'] ?? ''); ?>
                     <div class="upload-card" style="<?= $isDeleted ? 'opacity:0.5' : '' ?>">
                         <div class="thumb">
-                            <img src="<?= e($genSrc ?: $record['output_url']) ?>" alt="生成图片" loading="lazy" decoding="async"
-                                 onerror="this.style.display='none';this.nextElementSibling.style.display='grid'">
-                            <span class="no-img" style="display:none">文件丢失</span>
+                            <?php if ($fallbackSrc): ?>
+                            <img src="<?= e($fallbackSrc) ?>" alt="生成图片" loading="lazy" decoding="async"
+                                 onerror="this.onerror=null; this.src='/assets/placeholder-image.svg';">
+                            <?php else: ?>
+                            <span class="no-img" style="display:grid;place-items:center;aspect-ratio:1;background:var(--main-surface-soft);color:var(--text-muted);font-size:20px;">文件丢失</span>
+                            <?php endif; ?>
                         </div>
                         <div class="info">
                             <span><span class="label">用户：</span><span class="val"><?= e($record['username']) ?></span></span>

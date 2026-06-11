@@ -141,7 +141,7 @@ render_header('图片生成器', 'app');
                         <label for="image_aspect">图片比例</label>
                         <div class="model-chip">
                             <select name="image_aspect" id="image_aspect">
-                                <option value="">加载中...</option>
+                                <option value="auto">Auto</option>
                             </select>
                         </div>
                     </div>
@@ -149,7 +149,7 @@ render_header('图片生成器', 'app');
                         <label for="image_size">图片尺寸</label>
                         <div class="model-chip">
                             <select name="size" id="image_size">
-                                <option value="">加载中...</option>
+                                <option value="auto">Auto</option>
                             </select>
                         </div>
                     </div>
@@ -241,7 +241,7 @@ render_header('图片生成器', 'app');
                             <?php if ($isVideo && $videoSrc): ?>
                                 <video src="<?= e($videoSrc) ?>" controls preload="metadata"></video>
                             <?php elseif ($imageSrc): ?>
-                                <img src="<?= e($imageSrc) ?>" alt="生成图片" loading="lazy" decoding="async" style="aspect-ratio:1/1;object-fit:cover;width:100%;">
+                                <img src="<?= e($imageSrc) ?>" alt="生成图片" loading="lazy" decoding="async" style="aspect-ratio:1/1;object-fit:cover;width:100%;" onerror="this.onerror=null; this.src='/assets/placeholder-image.svg';">
                             <?php else: ?>
                                 <div style="width:100%;aspect-ratio:1;display:grid;place-items:center;background:var(--main-surface-soft);color:var(--text-muted);font-weight:700;font-size:13px;">
                                     <span class="status-badge <?= e($record['status']) ?>"><?= e(generation_status_label((string) $record['status'])) ?></span>

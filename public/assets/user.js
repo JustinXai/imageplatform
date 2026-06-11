@@ -82,7 +82,17 @@ const updateAspectOptions = () => {
   const aspectSelect = document.getElementById('image_aspect');
   if (!aspectSelect) return;
   const meta = getSelectedModelMeta();
-  if (!meta) return;
+  if (!meta) {
+    // Fallback: ensure at least one option so the dropdown is never stuck on "加载中..."
+    if (aspectSelect.options.length === 0) {
+      const opt = document.createElement('option');
+      opt.value = 'auto';
+      opt.textContent = 'Auto';
+      opt.selected = true;
+      aspectSelect.appendChild(opt);
+    }
+    return;
+  }
 
   let opts = [];
   try {
@@ -109,7 +119,16 @@ const updateSizeOptions = () => {
   const sizeSelect = document.getElementById('image_size');
   if (!sizeSelect) return;
   const meta = getSelectedModelMeta();
-  if (!meta) return;
+  if (!meta) {
+    if (sizeSelect.options.length === 0) {
+      const opt = document.createElement('option');
+      opt.value = 'auto';
+      opt.textContent = 'Auto';
+      opt.selected = true;
+      sizeSelect.appendChild(opt);
+    }
+    return;
+  }
 
   let opts = [];
   try {
@@ -274,6 +293,7 @@ const syncRecordCard = (record) => {
           im.loading = 'lazy';
           im.decoding = 'async';
           im.style = 'aspect-ratio:1/1;object-fit:cover;width:100%;';
+          im.onerror = function() { this.onerror = null; this.src = '/assets/placeholder-image.svg'; };
           placeholder.replaceWith(im);
         }
       } else if (imgEl.src !== src) {

@@ -129,7 +129,7 @@ render_admin_nav('index');
                         <?php if ($r['mode'] === 'video' && $recVideoSrc): ?>
                             <video src="<?= e($recVideoSrc) ?>" muted preload="metadata"></video>
                         <?php elseif ($src): ?>
-                            <img src="<?= e($src) ?>" alt="" loading="lazy">
+                            <img src="<?= e($src) ?>" alt="" loading="lazy" decoding="async" onerror="this.onerror=null; this.src='/assets/placeholder-image.svg';">
                         <?php else: ?>
                             <span class="no-img"><?= $modeIcon ?></span>
                         <?php endif; ?>

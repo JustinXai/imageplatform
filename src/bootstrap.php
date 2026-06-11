@@ -1131,3 +1131,6 @@ function invite_process_commission(int $invitedUserId, float $orderAmount, int $
     db()->prepare('INSERT INTO invite_commissions (inviter_id, invited_user_id, order_id, amount, credits, type)
         VALUES (?,?,?,?,?,?)')->execute([$inviterId, $invitedUserId, $orderId, $ca, $cc, 'recharge']);
 }
+
+// Load shared generation-record view helpers (all functions are idempotent via function_exists guard)
+require_once __DIR__ . '/generation_record_view_helpers.php';

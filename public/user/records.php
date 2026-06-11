@@ -116,7 +116,7 @@ render_header('生成记录', 'records');
                                     <?php if ($recIsVideo2 && $vSrc2): ?>
                                         <video src="<?= e($vSrc2) ?>" controls preload="metadata"></video>
                                     <?php elseif ($iSrc2): ?>
-                                        <img src="<?= e($iSrc2) ?>" alt="生成图片" loading="lazy" decoding="async" style="aspect-ratio:1/1;object-fit:cover;width:100%;">
+                                        <img src="<?= e($iSrc2) ?>" alt="生成图片" loading="lazy" decoding="async" style="aspect-ratio:1/1;object-fit:cover;width:100%;" onerror="this.onerror=null; this.src='/assets/placeholder-image.svg';">
                                     <?php else: ?>
                                         <div style="display:grid;place-items:center;aspect-ratio:1;background:var(--main-surface-soft);color:var(--text-muted);font-weight:700;"><?= e(generation_status_label((string) $record['status'])) ?></div>
                                     <?php endif; ?>
