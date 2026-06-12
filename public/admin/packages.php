@@ -25,12 +25,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             redirect('/admin/packages');
         }
 
-        $stmt = db()->prepare(
-            'INSERT INTO shop_packages (name, description, credits, price, sort_order) VALUES (?, ?, ?, ?, ?)'
-        );
-        $stmt->execute([$name, $description, $credits, $price, $sortOrder]);
-        flash('success', '套餐已创建。');
-        redirect('/admin/packages');
+        try {
+            $stmt = db()->prepare(
+                'INSERT INTO shop_packages (name, description, credits, price, sort_order) VALUES (?, ?, ?, ?, ?)'
+            );
+            $stmt->execute([$name, $description, $credits, $price, $sortOrder]);
+            flash('success', '套餐已创建。');
+            redirect('/admin/packages');
+        } catch (Throwable $e) {
+            Logger::error('admin create package failed: ' . $e->getMessage());
+            flash('error', '创建失败，请稍后重试。');
+            redirect('/admin/packages');
+        }
     }
 
     if ($action === 'update') {
@@ -62,10 +68,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             redirect('/admin/packages');
         }
 
-        $stmt = db()->prepare('DELETE FROM shop_packages WHERE id = ?');
-        $stmt->execute([$pkgId]);
-        flash('success', '套餐已删除。');
-        redirect('/admin/packages');
+        try {
+            $pdo = db();
+            $pdo->beginTransaction();
+
+            $stmt = $pdo->prepare('SELECT id, name FROM shop_packages WHERE id = ? FOR UPDATE');
+            $stmt->execute([$pkgId]);
+            $row = $stmt->fetch();
+            if (!$row) {
+                $pdo->rollBack();
+                flash('error', '套餐不存在。');
+                redirect('/admin/packages');
+            }
+
+            $stmt = $pdo->prepare('SELECT COUNT(*) FROM orders WHERE package_id = ? AND deleted_at IS NULL');
+            $stmt->execute([$pkgId]);
+            $refCount = (int) $stmt->fetchColumn();
+
+            $pdo->prepare('UPDATE shop_packages SET is_active = 0, deleted_at = NOW() WHERE id = ?')->execute([$pkgId]);
+
+            $pdo->commit();
+
+            $msg = '套餐已下架。';
+            if ($refCount > 0) {
+                $msg .= ' 已有 ' . $refCount . ' 笔历史订单引用此套餐，已保留记录。';
+            }
+            flash('success', $msg);
+            redirect('/admin/packages');
+        } catch (Throwable $e) {
+            if (db()->inTransaction()) { db()->rollBack(); }
+            Logger::error('admin delete package failed: ' . $e->getMessage(), ['package_id' => $pkgId]);
+            flash('error', '操作失败，请稍后重试。');
+            redirect('/admin/packages');
+        }
     }
 
     flash('error', '未知操作。');

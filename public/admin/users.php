@@ -32,9 +32,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         admin_users_redirect($page);
     }
     if ($action === 'update_credits') {
-        $credits = max(0, (int) ($_POST['credits'] ?? 0));
-        db()->prepare('UPDATE users SET credits = ? WHERE id = ?')->execute([$credits, $userId]);
-        flash('success', balance_label() . '已更新。'); admin_users_redirect($page);
+        $newCredits = max(0, (int) ($_POST['credits'] ?? 0));
+        $reason = trim((string) ($_POST['reason'] ?? '管理员调整'));
+        if ($reason === '') { $reason = '管理员调整'; }
+
+        try {
+            $pdo = db();
+            $pdo->beginTransaction();
+
+            $stmt = $pdo->prepare('SELECT credits FROM users WHERE id = ? FOR UPDATE');
+            $stmt->execute([$userId]);
+            $row = $stmt->fetch();
+            if (!$row) {
+                $pdo->rollBack();
+                flash('error', '用户不存在。');
+                admin_users_redirect($page);
+            }
+            $oldCredits = (int) $row['credits'];
+            $diff = $newCredits - $oldCredits;
+
+            $pdo->prepare('UPDATE users SET credits = ? WHERE id = ?')->execute([$newCredits, $userId]);
+
+            if ($diff !== 0) {
+                $pdo->prepare(
+                    'INSERT INTO credit_logs (user_id, amount, balance_before, balance_after, type, source, ref_type, ref_id, admin_id, reason, ip_address) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                )->execute([
+                    $userId,
+                    $diff,
+                    $oldCredits,
+                    $newCredits,
+                    'admin_adjustment',
+                    'admin',
+                    'user',
+                    (string) $userId,
+                    (int) $admin['id'],
+                    $reason,
+                    $_SERVER['REMOTE_ADDR'] ?? '',
+                ]);
+            }
+
+            $pdo->commit();
+            flash('success', balance_label() . '已更新。');
+            admin_users_redirect($page);
+        } catch (Throwable $e) {
+            if (db()->inTransaction()) { db()->rollBack(); }
+            Logger::error('admin update_credits failed: ' . $e->getMessage(), ['user_id' => $userId]);
+            flash('error', '操作失败，请稍后重试。');
+            admin_users_redirect($page);
+        }
     }
     if ($action === 'reset_password') {
         $password = trim((string) ($_POST['password'] ?? ''));
@@ -156,13 +201,15 @@ render_admin_nav('users');
                         </div>
                     </div>
                     <div class="actions">
-                        <form method="post" style="display:flex;gap:4px;align-items:center;">
+                        <form method="post" style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;" onsubmit="this.querySelector('[name=reason]').value=this.querySelector('[name=reason]').value.trim()">
                             <?= csrf_field() ?>
                             <input type="hidden" name="action" value="update_credits">
                             <input type="hidden" name="user_id" value="<?= $uid ?>">
                             <input type="hidden" name="page" value="<?= $page ?>">
                             <input type="number" name="credits" min="0" value="<?= (int) $u['credits'] ?>" required>
-                            <button type="submit" class="btn btn-secondary btn-sm">保存</button>
+                            <input type="text" name="reason" placeholder="调整原因" maxlength="255" style="width:120px;padding:5px 8px;border:1px solid var(--line);border-radius:8px;font-size:12px;background:var(--main-surface);">
+                            <button type="submit" class="btn btn-primary btn-sm">保存</button>
+                            <button type="button" class="btn btn-secondary btn-sm" onclick="this.form.querySelector('[name=credits]').value=<?= (int) $u['credits'] ?>;this.form.querySelector('[name=reason]').value='';">取消</button>
                         </form>
                         <form method="post" style="display:flex;gap:4px;align-items:center;">
                             <?= csrf_field() ?>

@@ -15,6 +15,12 @@ function ensure_shop_packages_table(): void
     $pdo = db();
     $stmt = $pdo->query("SHOW TABLES LIKE 'shop_packages'");
     if ($stmt->fetch()) {
+        $columns = [];
+        $colStmt = $pdo->query('SHOW COLUMNS FROM shop_packages');
+        foreach ($colStmt->fetchAll() as $column) { $columns[(string) $column['Field']] = true; }
+        if (empty($columns['deleted_at'])) {
+            $pdo->exec("ALTER TABLE shop_packages ADD COLUMN deleted_at DATETIME NULL AFTER created_at, ADD KEY idx_packages_deleted_at (deleted_at)");
+        }
         $checked = true;
         return;
     }

@@ -44,6 +44,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->execute([$row['id']]);
         $stmt = $pdo->prepare('UPDATE users SET credits = credits + ? WHERE id = ?');
         $stmt->execute([$row['credits'], $user['id']]);
+
+        $pdo->prepare(
+            'INSERT INTO credit_logs (user_id, amount, balance_before, balance_after, type, source, ref_type, ref_id, reason, ip_address) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        )->execute([
+            $user['id'],
+            (int) $row['credits'],
+            $user['credits'],
+            $user['credits'] + (int) $row['credits'],
+            'code_redeem',
+            'user',
+            'credit_code',
+            (string) $row['id'],
+            '兑换码：' . $code,
+            $_SERVER['REMOTE_ADDR'] ?? '',
+        ]);
+
         $pdo->commit();
 
         // 清除用户 Session 缓存，确保下次请求显示最新余额
