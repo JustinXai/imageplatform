@@ -262,65 +262,108 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $sortOrder = normalize_sort_input($_POST['sort_order'] ?? 0);
             $modelType = strtolower(trim((string) ($_POST['model_type'] ?? 'image')));
             if (!in_array($modelType, ['image', 'video', 'chat'], true)) $modelType = 'image';
-            $invokeMode = $modelType === 'video'
-                ? (strtolower(trim((string) ($_POST['invoke_mode'] ?? ''))) === 'kaiyuncode' ? 'kaiyuncode' : 'relay')
-                : (strtolower(trim((string) ($_POST['invoke_mode'] ?? ''))) === 'curl' ? 'curl' : 'relay');
 
             if ($name === '' || $modelId === '' || $baseUrl === '' || $apiKey === '') {
                 throw new InvalidArgumentException('请填写完整信息。');
             }
 
             $credits = normalize_credit_input($_POST['credits'] ?? '', true);
-            $supportsEdit = (int) ($_POST['supports_edit'] ?? 0);
-            $editAdapterRaw = strtolower(trim((string) ($_POST['edit_adapter'] ?? '')));
-            $editAdapter = in_array($editAdapterRaw, ['none','nano_banana_image_urls','openai_edits_multipart','newtoken_async_reference'], true)
-                ? $editAdapterRaw : 'none';
-            $editImageField = $editAdapterRaw === 'reference_images' ? 'reference_images' : 'image_urls';
-            $supportsReference = (int) ($_POST['supports_reference'] ?? 0);
-            $referenceRequired = (int) ($_POST['reference_required'] ?? 0);
-            $maxRefImages = normalize_int_input($_POST['max_reference_images'] ?? 1, '最大参考图数', 0, 9, 1);
-            $maxRefVideos = normalize_int_input($_POST['max_reference_videos'] ?? 0, '最大参考视频数', 0, 9, 0);
-            $maxRefAudios = normalize_int_input($_POST['max_reference_audios'] ?? 0, '最大参考音频数', 0, 9, 0);
-            $videoAdapter = in_array(strtolower(trim((string) ($_POST['video_adapter'] ?? ''))), ['none','kaiyuncode','newtoken_video_async'], true)
-                ? strtolower(trim((string) ($_POST['video_adapter'] ?? ''))) : 'none';
+            $invokeMode = $modelType === 'video'
+                ? ((strtolower(trim((string) ($_POST['invoke_mode'] ?? ''))) === 'kaiyuncode') ? 'kaiyuncode' : 'relay')
+                : ((strtolower(trim((string) ($_POST['invoke_mode'] ?? ''))) === 'curl') ? 'curl' : 'relay');
 
-            $imgAspList = normalize_aspect_options((string) ($_POST['image_aspect_options'] ?? 'auto,1:1,16:9,9:16,4:3,3:4'));
-            $imgAspOpts = encode_json_or_null($imgAspList);
-            $imgDefAsp = resolve_hidden_scalar($_POST, 'image_default_aspect', null, 'auto');
-            $imgSzOpts = resolve_hidden_json_csv($_POST, 'image_size_options', null, ['auto']);
-            $imgDefSz = resolve_hidden_scalar($_POST, 'image_default_size', null, 'auto');
+            // ─── IMAGE MODEL ─────────────────────────────────────────────────
+            if ($modelType === 'image') {
+                $supportsEdit = (int) ($_POST['supports_edit'] ?? 0);
+                $editAdapterRaw = strtolower(trim((string) ($_POST['edit_adapter'] ?? '')));
+                $editAdapter = in_array($editAdapterRaw, ['none','nano_banana_image_urls','openai_edits_multipart','newtoken_async_reference'], true)
+                    ? $editAdapterRaw : 'none';
+                $editImageField = $editAdapterRaw === 'reference_images' ? 'reference_images' : 'image_urls';
+                $supportsReference = (int) ($_POST['supports_reference'] ?? 0);
+                $referenceRequired = (int) ($_POST['reference_required'] ?? 0);
+                $maxRefImages = normalize_int_input($_POST['max_reference_images'] ?? 1, '最大参考图数', 0, 9, 1);
+                $maxRefVideos = normalize_int_input($_POST['max_reference_videos'] ?? 0, '最大参考视频数', 0, 9, 0);
+                $maxRefAudios = normalize_int_input($_POST['max_reference_audios'] ?? 0, '最大参考音频数', 0, 9, 0);
+                $videoAdapter = 'none';
 
-            $vidDurList = normalize_duration_options((string) ($_POST['video_duration_options'] ?? ''));
-            $vidDurOpts = encode_json_or_null($vidDurList);
-            $vidDefDur = ensure_default_duration_in_options(
-                normalize_int_input($_POST['video_default_duration'] ?? '', '默认时长', 1, 120, 10),
-                $vidDurList
-            );
-            $vidAspList = normalize_aspect_options((string) ($_POST['video_aspect_options'] ?? ''));
-            $vidAspOpts = encode_json_or_null($vidAspList);
-            $vidDefAsp = trim((string) ($_POST['video_default_aspect'] ?? '16:9'));
-            if (!in_array($vidDefAsp, $vidAspList, true)) {
-                throw new InvalidArgumentException('默认比例必须在可选比例列表内。');
+                $imgAspList = normalize_aspect_options((string) ($_POST['image_aspect_options'] ?? 'auto,1:1,16:9,9:16,4:3,3:4'));
+                $imgAspOpts = encode_json_or_null($imgAspList);
+                $imgDefAsp = resolve_hidden_scalar($_POST, 'image_default_aspect', null, 'auto');
+                $imgSzOpts = resolve_hidden_json_csv($_POST, 'image_size_options', null, ['auto']);
+                $imgDefSz = resolve_hidden_scalar($_POST, 'image_default_size', null, 'auto');
+
+                if ($supportsEdit && $editAdapter === 'none') {
+                    throw new InvalidArgumentException('如果要启用编辑功能，请选择有效的图片编辑接口类型。');
+                }
+
+                // Image model defaults for video fields
+                $vidDurOpts = null; $vidDefDur = 0;
+                $vidAspOpts = null; $vidDefAsp = '16:9';
+                $vidSzOpts = null; $vidDefSz = 'auto';
+                $vidModeOpts = null; $vidDefMode = 'text_to_video';
+                $vidRefField = 'reference_images'; $vidDurField = 'duration';
+                $vidAspField = 'aspect_ratio'; $vidSzField = 'size';
+                $vidImField = 'input_mode'; $vidRefVidField = 'extra_videos';
+                $vidRefAudField = 'extra_audios';
             }
-            $vidSzOpts = resolve_hidden_json_csv($_POST, 'video_size_options', null, ['auto']);
-            $vidDefSz = resolve_hidden_scalar($_POST, 'video_default_size', null, 'auto');
+            // ─── VIDEO MODEL ─────────────────────────────────────────────────
+            elseif ($modelType === 'video') {
+                $maxRefImages = normalize_int_input($_POST['max_reference_images'] ?? 1, '最大参考图数', 0, 9, 1);
+                $maxRefVideos = normalize_int_input($_POST['max_reference_videos'] ?? 0, '最大参考视频数', 0, 9, 0);
+                $maxRefAudios = normalize_int_input($_POST['max_reference_audios'] ?? 0, '最大参考音频数', 0, 9, 0);
+                $videoAdapter = in_array(strtolower(trim((string) ($_POST['video_adapter'] ?? ''))), ['none','kaiyuncode','newtoken_video_async'], true)
+                    ? strtolower(trim((string) ($_POST['video_adapter'] ?? ''))) : 'none';
+                $supportsEdit = 0; $editAdapter = 'none'; $editImageField = 'image_urls';
+                $supportsReference = 0; $referenceRequired = 0;
 
-            $allModeKeys = array_keys(VIDEO_MODE_OPTIONS);
-            $postModes = array_filter(array_map('trim', explode(',', (string) ($_POST['video_mode_options'] ?? ''))), fn($v) => $v !== '');
-            $vidModeOpts = encode_json_or_null(array_values(array_filter($postModes, fn($v) => in_array($v, $allModeKeys, true))));
-            $vidDefMode = in_array((string) ($_POST['video_default_mode'] ?? ''), $allModeKeys, true)
-                ? (string) $_POST['video_default_mode'] : 'text_to_video';
+                $imgAspOpts = null; $imgDefAsp = 'auto';
+                $imgSzOpts = null; $imgDefSz = 'auto';
 
-            $vidRefField = trim((string) ($_POST['video_reference_field'] ?? 'reference_images')) ?: 'reference_images';
-            $vidDurField = trim((string) ($_POST['video_duration_field'] ?? 'duration')) ?: 'duration';
-            $vidAspField = trim((string) ($_POST['video_aspect_field'] ?? 'aspect_ratio')) ?: 'aspect_ratio';
-            $vidSzField = resolve_hidden_scalar($_POST, 'video_size_field', null, 'size');
-            $vidImField = trim((string) ($_POST['video_input_mode_field'] ?? 'input_mode')) ?: 'input_mode';
-            $vidRefVidField = trim((string) ($_POST['video_reference_video_field'] ?? 'extra_videos')) ?: 'extra_videos';
-            $vidRefAudField = trim((string) ($_POST['video_reference_audio_field'] ?? 'extra_audios')) ?: 'extra_audios';
+                $vidDurList = normalize_duration_options((string) ($_POST['video_duration_options'] ?? ''));
+                $vidDurOpts = encode_json_or_null($vidDurList);
+                $vidDefDur = ensure_default_duration_in_options(
+                    normalize_int_input($_POST['video_default_duration'] ?? '', '默认时长', 1, 120, 10),
+                    $vidDurList
+                );
+                $vidAspList = normalize_aspect_options((string) ($_POST['video_aspect_options'] ?? ''));
+                $vidAspOpts = encode_json_or_null($vidAspList);
+                $vidDefAsp = trim((string) ($_POST['video_default_aspect'] ?? '16:9'));
+                if (!in_array($vidDefAsp, $vidAspList, true)) {
+                    throw new InvalidArgumentException('默认比例必须在可选比例列表内。');
+                }
+                $vidSzOpts = resolve_hidden_json_csv($_POST, 'video_size_options', null, ['auto']);
+                $vidDefSz = resolve_hidden_scalar($_POST, 'video_default_size', null, 'auto');
 
-            if ($supportsEdit && $editAdapter === 'none') {
-                throw new InvalidArgumentException('如果要启用编辑功能，请选择有效的图片编辑接口类型。');
+                $allModeKeys = array_keys(VIDEO_MODE_OPTIONS);
+                $postModes = array_filter(array_map('trim', explode(',', (string) ($_POST['video_mode_options'] ?? ''))), fn($v) => $v !== '');
+                $vidModeOpts = encode_json_or_null(array_values(array_filter($postModes, fn($v) => in_array($v, $allModeKeys, true))));
+                $vidDefMode = in_array((string) ($_POST['video_default_mode'] ?? ''), $allModeKeys, true)
+                    ? (string) $_POST['video_default_mode'] : 'text_to_video';
+
+                $vidRefField = trim((string) ($_POST['video_reference_field'] ?? 'reference_images')) ?: 'reference_images';
+                $vidDurField = trim((string) ($_POST['video_duration_field'] ?? 'duration')) ?: 'duration';
+                $vidAspField = trim((string) ($_POST['video_aspect_field'] ?? 'aspect_ratio')) ?: 'aspect_ratio';
+                $vidSzField = resolve_hidden_scalar($_POST, 'video_size_field', null, 'size');
+                $vidImField = trim((string) ($_POST['video_input_mode_field'] ?? 'input_mode')) ?: 'input_mode';
+                $vidRefVidField = trim((string) ($_POST['video_reference_video_field'] ?? 'extra_videos')) ?: 'extra_videos';
+                $vidRefAudField = trim((string) ($_POST['video_reference_audio_field'] ?? 'extra_audios')) ?: 'extra_audios';
+            }
+            // ─── CHAT MODEL ─────────────────────────────────────────────────
+            else {
+                $supportsEdit = 0; $editAdapter = 'none'; $editImageField = 'image_urls';
+                $supportsReference = 0; $referenceRequired = 0;
+                $maxRefImages = 1; $maxRefVideos = 0; $maxRefAudios = 0;
+                $videoAdapter = 'none';
+                $imgAspOpts = null; $imgDefAsp = 'auto';
+                $imgSzOpts = null; $imgDefSz = 'auto';
+                $vidDurOpts = null; $vidDefDur = 0;
+                $vidAspOpts = null; $vidDefAsp = '16:9';
+                $vidSzOpts = null; $vidDefSz = 'auto';
+                $vidModeOpts = null; $vidDefMode = 'text_to_video';
+                $vidRefField = 'reference_images'; $vidDurField = 'duration';
+                $vidAspField = 'aspect_ratio'; $vidSzField = 'size';
+                $vidImField = 'input_mode'; $vidRefVidField = 'extra_videos';
+                $vidRefAudField = 'extra_audios';
             }
 
             $stmt = db()->prepare(
@@ -353,10 +396,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash('success', '模型已添加。');
             redirect('/admin/ai_models');
         }
-
-        // ─────────────────────────────────────────────────────────────────
-        // update_model: NEVER touches DELETE, completely ignores confirm_delete
-        // ─────────────────────────────────────────────────────────────────
         if ($action === 'update_model') {
             $id = (int) ($_POST['id'] ?? 0);
             $name = trim((string) ($_POST['name'] ?? ''));
@@ -378,96 +417,192 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             // Hard guard: update_model handler MUST NOT act on confirm_delete
-            // Even if a malicious/buggy request sends confirm_delete=1,
-            // this handler ignores it completely.
             $confirmDelete = $_POST['confirm_delete'] ?? null;
-            unset($confirmDelete); // Explicitly unset to prevent accidental use
+            unset($confirmDelete);
 
             $modelType = strtolower(trim((string) ($_POST['model_type'] ?? ($existing['model_type'] ?? 'image'))));
             if (!in_array($modelType, ['image', 'video', 'chat'], true)) $modelType = 'image';
-            $invokeMode = $modelType === 'video'
-                ? (strtolower(trim((string) ($_POST['invoke_mode'] ?? ($existing['invoke_mode'] ?? 'relay')))) === 'kaiyuncode' ? 'kaiyuncode' : 'relay')
-                : (strtolower(trim((string) ($_POST['invoke_mode'] ?? ($existing['invoke_mode'] ?? 'relay')))) === 'curl' ? 'curl' : 'relay');
 
             $credits = normalize_credit_input($_POST['credits'] ?? ($existing['credits'] ?? ''), false, $existing['credits'] ?? null);
-            $supportsEdit = (int) ($_POST['supports_edit'] ?? ($existing['supports_edit'] ?? 0));
-            $editAdapterRaw = strtolower(trim((string) ($_POST['edit_adapter'] ?? ($existing['edit_adapter'] ?? 'none'))));
-            $editAdapter = in_array($editAdapterRaw, ['none','nano_banana_image_urls','openai_edits_multipart','newtoken_async_reference'], true)
-                ? $editAdapterRaw : 'none';
-            $editImageField = $editAdapterRaw === 'reference_images' ? 'reference_images' : 'image_urls';
-            $supportsReference = (int) ($_POST['supports_reference'] ?? ($existing['supports_reference'] ?? 0));
-            $referenceRequired = (int) ($_POST['reference_required'] ?? ($existing['reference_required'] ?? 0));
-            $maxRefImages = normalize_int_input($_POST['max_reference_images'] ?? ($existing['max_reference_images'] ?? 1), '最大参考图数', 0, 9, (int) ($existing['max_reference_images'] ?? 1));
-            $maxRefVideos = normalize_int_input($_POST['max_reference_videos'] ?? ($existing['max_reference_videos'] ?? 0), '最大参考视频数', 0, 9, 0);
-            $maxRefAudios = normalize_int_input($_POST['max_reference_audios'] ?? ($existing['max_reference_audios'] ?? 0), '最大参考音频数', 0, 9, 0);
-            $videoAdapter = in_array(strtolower(trim((string) ($_POST['video_adapter'] ?? ($existing['video_adapter'] ?? 'none')))), ['none','kaiyuncode','newtoken_video_async'], true)
-                ? strtolower(trim((string) ($_POST['video_adapter'] ?? ($existing['video_adapter'] ?? 'none')))) : 'none';
 
-            $imgAspList = normalize_aspect_options((string) ($_POST['image_aspect_options'] ?? safe_json_implode($existing['image_aspect_options_json'] ?? null)), $existing['image_aspect_options_json'] ?? null);
-            $imgAspOpts = encode_json_or_null($imgAspList);
-            $imgDefAsp = resolve_hidden_scalar($_POST, 'image_default_aspect', $existing['image_default_aspect'] ?? 'auto', 'auto');
-            $imgSzOpts = resolve_hidden_json_csv($_POST, 'image_size_options', $existing['image_size_options_json'] ?? null, ['auto']);
-            $imgDefSz = resolve_hidden_scalar($_POST, 'image_default_size', $existing['image_default_size'] ?? 'auto', 'auto');
+            $invokeMode = $modelType === 'video'
+                ? ((strtolower(trim((string) ($_POST['invoke_mode'] ?? ($existing['invoke_mode'] ?? 'relay')))) === 'kaiyuncode') ? 'kaiyuncode' : 'relay')
+                : ((strtolower(trim((string) ($_POST['invoke_mode'] ?? ($existing['invoke_mode'] ?? 'relay')))) === 'curl') ? 'curl' : 'relay');
 
-            $vidDurList = normalize_duration_options((string) ($_POST['video_duration_options'] ?? safe_json_implode($existing['video_duration_options_json'] ?? null)), $existing['video_duration_options_json'] ?? null);
-            $vidDurOpts = encode_json_or_null($vidDurList);
-            $vidDefDur = ensure_default_duration_in_options(
-                normalize_int_input($_POST['video_default_duration'] ?? ($existing['video_default_duration'] ?? ''), '默认时长', 1, 120, $existing['video_default_duration'] ?? null),
-                $vidDurList
-            );
-            $vidAspList = normalize_aspect_options((string) ($_POST['video_aspect_options'] ?? safe_json_implode($existing['video_aspect_options_json'] ?? null)), $existing['video_aspect_options_json'] ?? null);
-            $vidAspOpts = encode_json_or_null($vidAspList);
-            $vidDefAsp = trim((string) ($_POST['video_default_aspect'] ?? ($existing['video_default_aspect'] ?? '16:9')));
-            if ($vidDefAsp === '' || $vidDefAsp === '0') { $vidDefAsp = $existing['video_default_aspect'] ?? '16:9'; }
-            if (!in_array($vidDefAsp, $vidAspList, true)) {
-                throw new InvalidArgumentException('默认比例必须在可选比例列表内。');
+            // ─── IMAGE / IMAGE-EDIT MODEL ───────────────────────────────────────
+            // Image models: only validate/save image-specific fields.
+            // Do NOT require or validate any video_* fields.
+            if ($modelType === 'image') {
+                $supportsEdit = (int) ($_POST['supports_edit'] ?? ($existing['supports_edit'] ?? 0));
+                $editAdapterRaw = strtolower(trim((string) ($_POST['edit_adapter'] ?? ($existing['edit_adapter'] ?? 'none'))));
+                $editAdapter = in_array($editAdapterRaw, ['none','nano_banana_image_urls','openai_edits_multipart','newtoken_async_reference'], true)
+                    ? $editAdapterRaw : 'none';
+                $editImageField = $editAdapterRaw === 'reference_images' ? 'reference_images' : 'image_urls';
+                $supportsReference = (int) ($_POST['supports_reference'] ?? ($existing['supports_reference'] ?? 0));
+                $referenceRequired = (int) ($_POST['reference_required'] ?? ($existing['reference_required'] ?? 0));
+                $maxRefImages = normalize_int_input($_POST['max_reference_images'] ?? ($existing['max_reference_images'] ?? 1), '最大参考图数', 0, 9, (int) ($existing['max_reference_images'] ?? 1));
+                $maxRefVideos = normalize_int_input($_POST['max_reference_videos'] ?? ($existing['max_reference_videos'] ?? 0), '最大参考视频数', 0, 9, 0);
+                $maxRefAudios = normalize_int_input($_POST['max_reference_audios'] ?? ($existing['max_reference_audios'] ?? 0), '最大参考音频数', 0, 9, 0);
+                $videoAdapter = 'none';
+
+                $imgAspList = normalize_aspect_options((string) ($_POST['image_aspect_options'] ?? safe_json_implode($existing['image_aspect_options_json'] ?? null)), $existing['image_aspect_options_json'] ?? null);
+                $imgAspOpts = encode_json_or_null($imgAspList);
+                $imgDefAsp = resolve_hidden_scalar($_POST, 'image_default_aspect', $existing['image_default_aspect'] ?? 'auto', 'auto');
+                $imgSzOpts = resolve_hidden_json_csv($_POST, 'image_size_options', $existing['image_size_options_json'] ?? null, ['auto']);
+                $imgDefSz = resolve_hidden_scalar($_POST, 'image_default_size', $existing['image_default_size'] ?? 'auto', 'auto');
+
+                if ($supportsEdit && $editAdapter === 'none') {
+                    throw new InvalidArgumentException('如果要启用编辑功能，请选择有效的图片编辑接口类型。');
+                }
+
+                // Preserve video/image field defaults from DB for image models
+                $base = 'model_id=?, base_url=?, model_type=?, credits=?, invoke_mode=?, '
+                    . 'supports_edit=?, edit_adapter=?, edit_image_field=?, '
+                    . 'supports_reference=?, reference_required=?, max_reference_images=?, '
+                    . 'max_reference_videos=?, max_reference_audios=?, video_adapter=?, '
+                    . 'image_aspect_options_json=?, image_default_aspect=?, image_size_options_json=?, image_default_size=?, '
+                    . 'video_duration_options_json=?, video_default_duration=?, '
+                    . 'video_aspect_options_json=?, video_default_aspect=?, '
+                    . 'video_size_options_json=?, video_default_size=?, '
+                    . 'video_mode_options_json=?, video_default_mode=?, '
+                    . 'video_reference_field=?, video_duration_field=?, video_aspect_field=?, video_size_field=?, '
+                    . 'video_input_mode_field=?, video_reference_video_field=?, video_reference_audio_field=?, '
+                    . 'sort_order=?, is_active=?';
+                $vals = [
+                    $modelId, $baseUrl, $modelType, $credits, $invokeMode,
+                    $supportsEdit, $editAdapter, $editImageField,
+                    $supportsReference, $referenceRequired, $maxRefImages,
+                    $maxRefVideos, $maxRefAudios, $videoAdapter,
+                    $imgAspOpts, $imgDefAsp, $imgSzOpts, $imgDefSz,
+                    $existing['video_duration_options_json'] ?? null, (int) ($existing['video_default_duration'] ?? 0),
+                    $existing['video_aspect_options_json'] ?? null, $existing['video_default_aspect'] ?? '16:9',
+                    $existing['video_size_options_json'] ?? null, $existing['video_default_size'] ?? 'auto',
+                    $existing['video_mode_options_json'] ?? null, $existing['video_default_mode'] ?? 'text_to_video',
+                    $existing['video_reference_field'] ?? 'reference_images',
+                    $existing['video_duration_field'] ?? 'duration',
+                    $existing['video_aspect_field'] ?? 'aspect_ratio',
+                    $existing['video_size_field'] ?? 'size',
+                    $existing['video_input_mode_field'] ?? 'input_mode',
+                    $existing['video_reference_video_field'] ?? 'extra_videos',
+                    $existing['video_reference_audio_field'] ?? 'extra_audios',
+                    $sortOrder, $isActive,
+                ];
             }
-            $vidSzOpts = resolve_hidden_json_csv($_POST, 'video_size_options', $existing['video_size_options_json'] ?? null, ['auto']);
-            $vidDefSz = resolve_hidden_scalar($_POST, 'video_default_size', $existing['video_default_size'] ?? 'auto', 'auto');
+            // ─── VIDEO MODEL ─────────────────────────────────────────────────
+            // Video models: validate and save video-specific fields.
+            // Do NOT require image_* field validation.
+            elseif ($modelType === 'video') {
+                $maxRefImages = normalize_int_input($_POST['max_reference_images'] ?? ($existing['max_reference_images'] ?? 1), '最大参考图数', 0, 9, (int) ($existing['max_reference_images'] ?? 1));
+                $maxRefVideos = normalize_int_input($_POST['max_reference_videos'] ?? ($existing['max_reference_videos'] ?? 0), '最大参考视频数', 0, 9, 0);
+                $maxRefAudios = normalize_int_input($_POST['max_reference_audios'] ?? ($existing['max_reference_audios'] ?? 0), '最大参考音频数', 0, 9, 0);
+                $videoAdapter = in_array(strtolower(trim((string) ($_POST['video_adapter'] ?? ($existing['video_adapter'] ?? 'none')))), ['none','kaiyuncode','newtoken_video_async'], true)
+                    ? strtolower(trim((string) ($_POST['video_adapter'] ?? ($existing['video_adapter'] ?? 'none')))) : 'none';
+                $supportsEdit = 0;
+                $editAdapter = 'none';
+                $editImageField = 'image_urls';
 
-            $allModeKeys = array_keys(VIDEO_MODE_OPTIONS);
-            $postModes = array_filter(array_map('trim', explode(',', (string) ($_POST['video_mode_options'] ?? safe_json_implode($existing['video_mode_options_json'] ?? null)))), fn($v) => $v !== '');
-            $vidModeOpts = encode_json_or_null(array_values(array_filter($postModes, fn($v) => in_array($v, $allModeKeys, true))));
-            $vidDefMode = in_array((string) ($_POST['video_default_mode'] ?? ($existing['video_default_mode'] ?? '')), $allModeKeys, true)
-                ? (string) ($_POST['video_default_mode'] ?: $existing['video_default_mode']) : 'text_to_video';
+                $vidDurList = normalize_duration_options(
+                    (string) ($_POST['video_duration_options'] ?? safe_json_implode($existing['video_duration_options_json'] ?? null)),
+                    $existing['video_duration_options_json'] ?? null
+                );
+                $vidDurOpts = encode_json_or_null($vidDurList);
+                $vidDefDur = ensure_default_duration_in_options(
+                    normalize_int_input($_POST['video_default_duration'] ?? ($existing['video_default_duration'] ?? ''), '默认时长', 1, 120, $existing['video_default_duration'] ?? null),
+                    $vidDurList
+                );
+                $vidAspList = normalize_aspect_options(
+                    (string) ($_POST['video_aspect_options'] ?? safe_json_implode($existing['video_aspect_options_json'] ?? null)),
+                    $existing['video_aspect_options_json'] ?? null
+                );
+                $vidAspOpts = encode_json_or_null($vidAspList);
+                $vidDefAsp = trim((string) ($_POST['video_default_aspect'] ?? ($existing['video_default_aspect'] ?? '16:9')));
+                if ($vidDefAsp === '' || $vidDefAsp === '0') { $vidDefAsp = $existing['video_default_aspect'] ?? '16:9'; }
+                if (!in_array($vidDefAsp, $vidAspList, true)) {
+                    throw new InvalidArgumentException('默认比例必须在可选比例列表内。');
+                }
+                $vidSzOpts = resolve_hidden_json_csv($_POST, 'video_size_options', $existing['video_size_options_json'] ?? null, ['auto']);
+                $vidDefSz = resolve_hidden_scalar($_POST, 'video_default_size', $existing['video_default_size'] ?? 'auto', 'auto');
 
-            $vidRefField = trim((string) ($_POST['video_reference_field'] ?? ($existing['video_reference_field'] ?? 'reference_images'))) ?: 'reference_images';
-            $vidDurField = trim((string) ($_POST['video_duration_field'] ?? ($existing['video_duration_field'] ?? 'duration'))) ?: 'duration';
-            $vidAspField = trim((string) ($_POST['video_aspect_field'] ?? ($existing['video_aspect_field'] ?? 'aspect_ratio'))) ?: 'aspect_ratio';
-            $vidSzField = resolve_hidden_scalar($_POST, 'video_size_field', $existing['video_size_field'] ?? 'size', 'size');
-            $vidImField = trim((string) ($_POST['video_input_mode_field'] ?? ($existing['video_input_mode_field'] ?? 'input_mode'))) ?: 'input_mode';
-            $vidRefVidField = trim((string) ($_POST['video_reference_video_field'] ?? ($existing['video_reference_video_field'] ?? 'extra_videos'))) ?: 'extra_videos';
-            $vidRefAudField = trim((string) ($_POST['video_reference_audio_field'] ?? ($existing['video_reference_audio_field'] ?? 'extra_audios'))) ?: 'extra_audios';
+                $allModeKeys = array_keys(VIDEO_MODE_OPTIONS);
+                $postModes = array_filter(array_map('trim', explode(',', (string) ($_POST['video_mode_options'] ?? safe_json_implode($existing['video_mode_options_json'] ?? null)))), fn($v) => $v !== '');
+                $vidModeOpts = encode_json_or_null(array_values(array_filter($postModes, fn($v) => in_array($v, $allModeKeys, true))));
+                $vidDefMode = in_array((string) ($_POST['video_default_mode'] ?? ($existing['video_default_mode'] ?? '')), $allModeKeys, true)
+                    ? (string) ($_POST['video_default_mode'] ?: $existing['video_default_mode']) : 'text_to_video';
 
-            if ($supportsEdit && $editAdapter === 'none') {
-                throw new InvalidArgumentException('如果要启用编辑功能，请选择有效的图片编辑接口类型。');
+                $vidRefField = trim((string) ($_POST['video_reference_field'] ?? ($existing['video_reference_field'] ?? 'reference_images'))) ?: 'reference_images';
+                $vidDurField = trim((string) ($_POST['video_duration_field'] ?? ($existing['video_duration_field'] ?? 'duration'))) ?: 'duration';
+                $vidAspField = trim((string) ($_POST['video_aspect_field'] ?? ($existing['video_aspect_field'] ?? 'aspect_ratio'))) ?: 'aspect_ratio';
+                $vidSzField = resolve_hidden_scalar($_POST, 'video_size_field', $existing['video_size_field'] ?? 'size', 'size');
+                $vidImField = trim((string) ($_POST['video_input_mode_field'] ?? ($existing['video_input_mode_field'] ?? 'input_mode'))) ?: 'input_mode';
+                $vidRefVidField = trim((string) ($_POST['video_reference_video_field'] ?? ($existing['video_reference_video_field'] ?? 'extra_videos'))) ?: 'extra_videos';
+                $vidRefAudField = trim((string) ($_POST['video_reference_audio_field'] ?? ($existing['video_reference_audio_field'] ?? 'extra_audios'))) ?: 'extra_audios';
+
+                $base = 'model_id=?, base_url=?, model_type=?, credits=?, invoke_mode=?, '
+                    . 'supports_edit=?, edit_adapter=?, edit_image_field=?, '
+                    . 'supports_reference=?, reference_required=?, max_reference_images=?, '
+                    . 'max_reference_videos=?, max_reference_audios=?, video_adapter=?, '
+                    . 'image_aspect_options_json=?, image_default_aspect=?, image_size_options_json=?, image_default_size=?, '
+                    . 'video_duration_options_json=?, video_default_duration=?, '
+                    . 'video_aspect_options_json=?, video_default_aspect=?, '
+                    . 'video_size_options_json=?, video_default_size=?, '
+                    . 'video_mode_options_json=?, video_default_mode=?, '
+                    . 'video_reference_field=?, video_duration_field=?, video_aspect_field=?, video_size_field=?, '
+                    . 'video_input_mode_field=?, video_reference_video_field=?, video_reference_audio_field=?, '
+                    . 'sort_order=?, is_active=?';
+                $vals = [
+                    $modelId, $baseUrl, $modelType, $credits, $invokeMode,
+                    $supportsEdit, $editAdapter, $editImageField,
+                    0, 0, $maxRefImages,
+                    $maxRefVideos, $maxRefAudios, $videoAdapter,
+                    $existing['image_aspect_options_json'] ?? null, $existing['image_default_aspect'] ?? 'auto',
+                    $existing['image_size_options_json'] ?? null, $existing['image_default_size'] ?? 'auto',
+                    $vidDurOpts, $vidDefDur,
+                    $vidAspOpts, $vidDefAsp,
+                    $vidSzOpts, $vidDefSz,
+                    $vidModeOpts, $vidDefMode,
+                    $vidRefField, $vidDurField, $vidAspField, $vidSzField,
+                    $vidImField, $vidRefVidField, $vidRefAudField,
+                    $sortOrder, $isActive,
+                ];
+            }
+            // ─── CHAT / AI CONVERSATION MODEL ─────────────────────────────────
+            else {
+                // Chat models: preserve image/video field defaults from DB, no special validation
+                $base = 'model_id=?, base_url=?, model_type=?, credits=?, invoke_mode=?, '
+                    . 'supports_edit=?, edit_adapter=?, edit_image_field=?, '
+                    . 'supports_reference=?, reference_required=?, max_reference_images=?, '
+                    . 'max_reference_videos=?, max_reference_audios=?, video_adapter=?, '
+                    . 'image_aspect_options_json=?, image_default_aspect=?, image_size_options_json=?, image_default_size=?, '
+                    . 'video_duration_options_json=?, video_default_duration=?, '
+                    . 'video_aspect_options_json=?, video_default_aspect=?, '
+                    . 'video_size_options_json=?, video_default_size=?, '
+                    . 'video_mode_options_json=?, video_default_mode=?, '
+                    . 'video_reference_field=?, video_duration_field=?, video_aspect_field=?, video_size_field=?, '
+                    . 'video_input_mode_field=?, video_reference_video_field=?, video_reference_audio_field=?, '
+                    . 'sort_order=?, is_active=?';
+                $vals = [
+                    $modelId, $baseUrl, $modelType, $credits, $invokeMode,
+                    0, 'none', 'image_urls',
+                    0, 0, 1,
+                    0, 0, 'none',
+                    $existing['image_aspect_options_json'] ?? null, $existing['image_default_aspect'] ?? 'auto',
+                    $existing['image_size_options_json'] ?? null, $existing['image_default_size'] ?? 'auto',
+                    $existing['video_duration_options_json'] ?? null, (int) ($existing['video_default_duration'] ?? 0),
+                    $existing['video_aspect_options_json'] ?? null, $existing['video_default_aspect'] ?? '16:9',
+                    $existing['video_size_options_json'] ?? null, $existing['video_default_size'] ?? 'auto',
+                    $existing['video_mode_options_json'] ?? null, $existing['video_default_mode'] ?? 'text_to_video',
+                    $existing['video_reference_field'] ?? 'reference_images',
+                    $existing['video_duration_field'] ?? 'duration',
+                    $existing['video_aspect_field'] ?? 'aspect_ratio',
+                    $existing['video_size_field'] ?? 'size',
+                    $existing['video_input_mode_field'] ?? 'input_mode',
+                    $existing['video_reference_video_field'] ?? 'extra_videos',
+                    $existing['video_reference_audio_field'] ?? 'extra_audios',
+                    $sortOrder, $isActive,
+                ];
             }
 
-            $base = 'model_id=?, base_url=?, model_type=?, credits=?, invoke_mode=?, '
-                . 'supports_edit=?, edit_adapter=?, edit_image_field=?, '
-                . 'supports_reference=?, reference_required=?, max_reference_images=?, '
-                . 'max_reference_videos=?, max_reference_audios=?, video_adapter=?, '
-                . 'image_aspect_options_json=?, image_default_aspect=?, image_size_options_json=?, image_default_size=?, '
-                . 'video_duration_options_json=?, video_default_duration=?, '
-                . 'video_aspect_options_json=?, video_default_aspect=?, '
-                . 'video_size_options_json=?, video_default_size=?, '
-                . 'video_mode_options_json=?, video_default_mode=?, '
-                . 'video_reference_field=?, video_duration_field=?, video_aspect_field=?, video_size_field=?, '
-                . 'video_input_mode_field=?, video_reference_video_field=?, video_reference_audio_field=?, '
-                . 'sort_order=?, is_active=?';
-            $vals = [
-                $modelId, $baseUrl, $modelType, $credits, $invokeMode,
-                $supportsEdit, $editAdapter, $editImageField,
-                $supportsReference, $referenceRequired, $maxRefImages,
-                $maxRefVideos, $maxRefAudios, $videoAdapter,
-                $imgAspOpts, $imgDefAsp, $imgSzOpts, $imgDefSz,
-                $vidDurOpts, $vidDefDur, $vidAspOpts, $vidDefAsp,
-                $vidSzOpts, $vidDefSz, $vidModeOpts, $vidDefMode,
-                $vidRefField, $vidDurField, $vidAspField, $vidSzField,
-                $vidImField, $vidRefVidField, $vidRefAudField,
-                $sortOrder, $isActive,
-            ];
-
+            // API key: only update if provided (preserve existing otherwise)
             if ($apiKey !== '') {
                 $sql = "UPDATE ai_models SET name=?, api_key=?, $base WHERE id=?";
                 $vals = array_merge([$name, $apiKey], $vals, [$id]);
@@ -478,10 +613,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $stmt = db()->prepare($sql);
             $stmt->execute($vals);
-            flash('success', '模型已更新。');
+            $count = $stmt->rowCount();
+            // If rowCount is 0, check whether values actually changed or save failed silently
+            if ($count === 0) {
+                $check = db()->prepare('SELECT credits FROM ai_models WHERE id = ?');
+                $check->execute([$id]);
+                $currentCredits = $check->fetchColumn();
+                if ((string) $currentCredits !== (string) $credits) {
+                    flash('error', '保存失败，请重试。');
+                } else {
+                    flash('success', '模型已更新。');
+                }
+            } else {
+                flash('success', '模型已更新。');
+            }
             redirect('/admin/ai_models');
         }
-
         // ─────────────────────────────────────────────────────────────────
         // delete_model: requires confirm_delete=1, soft-delete preferred
         // ─────────────────────────────────────────────────────────────────
@@ -690,6 +837,7 @@ th { font-weight: 700; color: var(--text-soft); text-transform: uppercase; font-
   <td><input form="fupd-img-<?= $mid ?>" name="image_aspect_options" class="compact-input aspect-input" value="<?= e(implode(',', $imgAspOpts)) ?>" placeholder="auto,16:9,9:16"></td>
   <td>
     <form method="post" id="fupd-img-<?= $mid ?>">
+    <input type="hidden" form="fupd-img-<?= $mid ?>" name="model_type" value="<?= e($m['model_type'] ?? 'image') ?>">
     <input type="hidden" form="fupd-img-<?= $mid ?>" name="csrf_token" value="<?= $csrf ?>">
     <input type="hidden" form="fupd-img-<?= $mid ?>" name="action" value="update_model">
     <input type="hidden" form="fupd-img-<?= $mid ?>" name="id" value="<?= $mid ?>">
@@ -765,6 +913,7 @@ th { font-weight: 700; color: var(--text-soft); text-transform: uppercase; font-
   </select></td>
   <td>
     <form method="post" id="fupd-vid-<?= $mid ?>">
+    <input type="hidden" form="fupd-vid-<?= $mid ?>" name="model_type" value="<?= e($m['model_type'] ?? 'video') ?>">
     <input type="hidden" form="fupd-vid-<?= $mid ?>" name="csrf_token" value="<?= $csrf ?>">
     <input type="hidden" form="fupd-vid-<?= $mid ?>" name="action" value="update_model">
     <input type="hidden" form="fupd-vid-<?= $mid ?>" name="id" value="<?= $mid ?>">
@@ -801,6 +950,26 @@ th { font-weight: 700; color: var(--text-soft); text-transform: uppercase; font-
     <input type="hidden" form="fupd-chat-<?= $mid ?>" name="csrf_token" value="<?= $csrf ?>">
     <input type="hidden" form="fupd-chat-<?= $mid ?>" name="action" value="update_model">
     <input type="hidden" form="fupd-chat-<?= $mid ?>" name="id" value="<?= $mid ?>">
+    <input type="hidden" form="fupd-chat-<?= $mid ?>" name="model_type" value="chat">
+    <input type="hidden" form="fupd-chat-<?= $mid ?>" name="image_aspect_options" value="">
+    <input type="hidden" form="fupd-chat-<?= $mid ?>" name="image_default_aspect" value="">
+    <input type="hidden" form="fupd-chat-<?= $mid ?>" name="image_size_options" value="">
+    <input type="hidden" form="fupd-chat-<?= $mid ?>" name="image_default_size" value="">
+    <input type="hidden" form="fupd-chat-<?= $mid ?>" name="video_duration_options" value="">
+    <input type="hidden" form="fupd-chat-<?= $mid ?>" name="video_default_duration" value="">
+    <input type="hidden" form="fupd-chat-<?= $mid ?>" name="video_aspect_options" value="">
+    <input type="hidden" form="fupd-chat-<?= $mid ?>" name="video_default_aspect" value="">
+    <input type="hidden" form="fupd-chat-<?= $mid ?>" name="video_size_options" value="">
+    <input type="hidden" form="fupd-chat-<?= $mid ?>" name="video_default_size" value="">
+    <input type="hidden" form="fupd-chat-<?= $mid ?>" name="video_mode_options" value="">
+    <input type="hidden" form="fupd-chat-<?= $mid ?>" name="video_default_mode" value="">
+    <input type="hidden" form="fupd-chat-<?= $mid ?>" name="video_reference_field" value="">
+    <input type="hidden" form="fupd-chat-<?= $mid ?>" name="video_duration_field" value="">
+    <input type="hidden" form="fupd-chat-<?= $mid ?>" name="video_aspect_field" value="">
+    <input type="hidden" form="fupd-chat-<?= $mid ?>" name="video_size_field" value="">
+    <input type="hidden" form="fupd-chat-<?= $mid ?>" name="video_input_mode_field" value="">
+    <input type="hidden" form="fupd-chat-<?= $mid ?>" name="video_reference_video_field" value="">
+    <input type="hidden" form="fupd-chat-<?= $mid ?>" name="video_reference_audio_field" value="">
     </form>
     <form method="post" id="fdel-chat-<?= $mid ?>">
     <input type="hidden" form="fdel-chat-<?= $mid ?>" name="csrf_token" value="<?= $csrf ?>">
