@@ -263,8 +263,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $modelType = strtolower(trim((string) ($_POST['model_type'] ?? 'image')));
             if (!in_array($modelType, ['image', 'video', 'chat'], true)) $modelType = 'image';
 
-            if ($name === '' || $modelId === '' || $baseUrl === '' || $apiKey === '') {
-                throw new InvalidArgumentException('请填写完整信息。');
+            if ($name === '' || $modelId === '' || $baseUrl === '') {
+                throw new InvalidArgumentException('请填写完整信息（名称、模型 ID、Base URL 为必填）。');
             }
 
             $credits = normalize_credit_input($_POST['credits'] ?? '', true);
@@ -366,33 +366,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $vidRefAudField = 'extra_audios';
             }
 
+            $fields  = ['name','model_id','base_url','api_key','model_type','credits','invoke_mode','supports_edit','edit_adapter','edit_image_field','supports_reference','reference_required','max_reference_images','max_reference_videos','max_reference_audios','video_adapter','image_aspect_options_json','image_default_aspect','image_size_options_json','image_default_size','video_duration_options_json','video_default_duration','video_aspect_options_json','video_default_aspect','video_size_options_json','video_default_size','video_mode_options_json','video_default_mode','video_reference_field','video_duration_field','video_aspect_field','video_size_field','video_input_mode_field','video_reference_video_field','video_reference_audio_field','sort_order','is_active','auth_type'];
+            $params  = [$name,$modelId,$baseUrl,$apiKey,$modelType,$credits,$invokeMode,$supportsEdit,$editAdapter,$editImageField,$supportsReference,$referenceRequired,$maxRefImages,$maxRefVideos,$maxRefAudios,$videoAdapter,$imgAspOpts,$imgDefAsp,$imgSzOpts,$imgDefSz,$vidDurOpts,$vidDefDur,$vidAspOpts,$vidDefAsp,$vidSzOpts,$vidDefSz,$vidModeOpts,$vidDefMode,$vidRefField,$vidDurField,$vidAspField,$vidSzField,$vidImField,$vidRefVidField,$vidRefAudField,$sortOrder,0,'bearer'];
+            $placeholders = implode(', ', array_fill(0, count($fields), '?'));
+
             $stmt = db()->prepare(
-                'INSERT INTO ai_models (name, model_id, base_url, api_key, model_type, credits, invoke_mode, '
-                . 'supports_edit, edit_adapter, edit_image_field, '
-                . 'supports_reference, reference_required, max_reference_images, '
-                . 'max_reference_videos, max_reference_audios, video_adapter, '
-                . 'image_aspect_options_json, image_default_aspect, image_size_options_json, image_default_size, '
-                . 'video_duration_options_json, video_default_duration, '
-                . 'video_aspect_options_json, video_default_aspect, '
-                . 'video_size_options_json, video_default_size, '
-                . 'video_mode_options_json, video_default_mode, '
-                . 'video_reference_field, video_duration_field, video_aspect_field, video_size_field, '
-                . 'video_input_mode_field, video_reference_video_field, video_reference_audio_field, '
-                . 'sort_order) '
-                . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                'INSERT INTO ai_models (' . implode(', ', $fields) . ') VALUES (' . $placeholders . ')'
             );
-            $stmt->execute([
-                $name, $modelId, $baseUrl, $apiKey, $modelType, $credits, $invokeMode,
-                $supportsEdit, $editAdapter, $editImageField,
-                $supportsReference, $referenceRequired, $maxRefImages,
-                $maxRefVideos, $maxRefAudios, $videoAdapter,
-                $imgAspOpts, $imgDefAsp, $imgSzOpts, $imgDefSz,
-                $vidDurOpts, $vidDefDur, $vidAspOpts, $vidDefAsp,
-                $vidSzOpts, $vidDefSz, $vidModeOpts, $vidDefMode,
-                $vidRefField, $vidDurField, $vidAspField, $vidSzField,
-                $vidImField, $vidRefVidField, $vidRefAudField,
-                $sortOrder,
-            ]);
+            $stmt->execute($params);
             flash('success', '模型已添加。');
             redirect('/admin/ai_models');
         }
@@ -658,6 +639,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect('/admin/ai_models');
     } catch (InvalidArgumentException $e) {
         flash('error', $e->getMessage());
+        redirect('/admin/ai_models');
+    } catch (Throwable $e) {
+        error_log('[ai_models.php] Unhandled exception: ' . $e->getMessage() . ' | File: ' . $e->getFile() . ':' . $e->getLine());
+        flash('error', '操作失败，请稍后重试。');
         redirect('/admin/ai_models');
     }
 }
